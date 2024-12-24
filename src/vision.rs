@@ -1,143 +1,157 @@
-use serde::{Deserialize, Serialize};
 use log::{info, error};
-use rig::providers::openai::Client;
 use rig::completion::{Completion, Message}; 
-use async_trait::async_trait;
+use rig::providers::openai::Client;  
+use serde::{Serialize, Deserialize};
+use base64::prelude::*;
 use anyhow::Result;
 
-const MAX_LABELS: usize = 4;
-const MIN_CONFIDENCE: f32 = 0.75;
+const DEFAULT_STYLE: &str = "children's book illustration style";
 
-#[derive(Debug, Deserialize)]
-struct LabelAnnotation {
-    description: String,
-    score: f32,
+pub struct ImageGenerator {
+    openai_client: Client,
+    config: ImageConfig,
 }
 
-#[async_trait]
-trait VisionService {
-    async fn analyze_image(&self, image_url: &str) -> Result<Vec<LabelAnnotation>, VisionError>;
-    async fn validate_image_url(&self, url: &str) -> Result<bool, VisionError>;
+#[derive(Debug, Clone, Serialize)]
+struct ImageGenerationRequest {
+    prompt: String,
+    n: i32,
+    size: String,
+    response_format: String,
 }
 
-pub struct VisionAnalyzer {
-    client: Client,
-    config: VisionConfig,
+#[derive(Debug, Deserialize, Serialize)]
+struct ImageGenerationResponse {
+    created: u64,
+    data: Vec<ImageData>,
 }
 
-impl VisionAnalyzer {
-    pub fn new(openai_client: &Client) -> Result<Self, VisionError> {
-        Ok(VisionAnalyzer {
-            client: openai_client.clone(),
-            config: VisionConfig::default(),
+#[derive(Debug, Deserialize, Serialize)]
+struct ImageData {
+    b64_json: String,
+}
+
+impl ImageGenerator {
+    pub fn new(openai_client: &Client) -> Result<Self> {
+        Ok(ImageGenerator {
+            openai_client: openai_client.clone(),
+            config: ImageConfig::default(),
         })
     }
 
-    pub async fn analyze_image(&self, image_url: &str) -> Result<Vec<String>, VisionError> {
-        info!("Analyzing image: {}", image_url);
+    pub async fn generate_cat_image(&self, keywords: &[String]) -> Result<Vec<u8>, ImageError> {
+        info!("Generating cat image with keywords: {:?}", keywords);
 
-        let agent = self.client
-            .agent("gpt-4-vision-preview")
+        let prompt = self.build_prompt(keywords);
+        
+        let agent = self.openai_client
+            .agent("dall-e-3")
             .build();
         
-        let prompt = format!(
-            "You are a vision analysis assistant. Analyze images and provide labels with confidence scores.\n\n\
-            Analyze this image {} and provide up to {} labels with confidence above {}. \
-            Format each label as 'label:confidence'. \
-            Focus on clear, descriptive labels.",
-            image_url,
-            self.config.max_labels,
-            self.config.confidence_threshold
-        );
-
         let messages = vec![Message {
             role: "user".to_string(),
-            content: prompt.clone(),
+            content: format!(
+                "Generate an image: {}. Return the image data in base64 format.",
+                prompt
+            ),
         }];
 
         let response = agent
             .completion(&messages[0].content, messages)
             .await
-            .map_err(|e| VisionError::ApiError(e.to_string()))?
+            .map_err(|e| ImageError::ApiError(e.to_string()))?
             .message
             .content
             .clone();
 
-        let keywords = self.process_response(&response)?;
+        let temp_response = ImageGenerationResponse {
+            created: chrono::Utc::now().timestamp() as u64,
+            data: vec![ImageData {
+                b64_json: response,
+            }],
+        };
 
-        info!("Image analysis completed. Keywords: {:?}", keywords);
-        Ok(keywords)
-    }
-
-    fn process_response(&self, response: &str) -> Result<Vec<String>, VisionError> {
-        let mut keywords = Vec::new();
+        let json_str = serde_json::to_string(&temp_response)
+            .map_err(|e| ImageError::ProcessingError(e.to_string()))?;
+            
+        let image_data = self.process_response(&json_str)?;
         
-        for line in response.lines() {
-            if let Some((label, confidence)) = line.split_once(':') {
-                if let Ok(score) = confidence.trim().parse::<f32>() {
-                    if score >= self.config.confidence_threshold {
-                        keywords.push(label.trim().to_lowercase());
-                    }
-                }
-            }
+        // Validate the generated image
+        if !self.validate_image(&image_data)? {
+            return Err(ImageError::InvalidImageFormat);
         }
-
-        // Fallback for empty results
-        if keywords.is_empty() {
-            keywords.push("unclassified".to_string());
-        }
-
-        Ok(keywords.into_iter().take(self.config.max_labels).collect())
+        
+        info!("Image generation completed successfully");
+        Ok(image_data)
     }
 
-    pub async fn validate_image_url(&self, url: &str) -> Result<bool, VisionError> {
-        if !url.starts_with("http") || !url.contains('.') {
+    fn build_prompt(&self, keywords: &[String]) -> String {
+        let keywords_str = keywords.join(", ");
+        format!(
+            "A cute cartoon cat with characteristics of {}, drawn in {}, \
+            warm colors, friendly expression, simple background, safe for children",
+            keywords_str,
+            self.config.style
+        )
+    }
+
+    fn process_response(&self, response: &str) -> Result<Vec<u8>, ImageError> {
+        let parsed_response = serde_json::from_str::<ImageGenerationResponse>(response)
+            .map_err(|e| ImageError::ProcessingError(e.to_string()))?;
+        
+        let image_data = parsed_response.data
+            .first()
+            .ok_or(ImageError::NoImageGenerated)?;
+
+        BASE64_STANDARD.decode(&image_data.b64_json)
+            .map_err(|e| ImageError::ProcessingError(e.to_string()))
+    }
+
+    pub fn validate_image(&self, image_data: &[u8]) -> Result<bool, ImageError> {
+        if image_data.is_empty() {
             return Ok(false);
         }
 
-        let client = reqwest::Client::new();
-        let response = client
-            .head(url)
-            .send()
-            .await
-            .map_err(|_| VisionError::InvalidImageUrl)?;
+        // Check for JPEG magic numbers
+        if image_data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            return Ok(true);
+        }
 
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+        // Check for PNG magic numbers
+        if image_data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+            return Ok(true);
+        }
 
-        Ok(content_type.starts_with("image/"))
+        Ok(false)
     }
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum VisionError {
-    #[error("Failed to analyze image: {0}")]
-    AnalysisFailed(String),
+pub enum ImageError {
+    #[error("No image was generated")]
+    NoImageGenerated,
     
-    #[error("Invalid image URL")]
-    InvalidImageUrl,
+    #[error("Invalid image format")]
+    InvalidImageFormat,
     
     #[error("API error: {0}")]
     ApiError(String),
     
-    #[error("Initialization error: {0}")]
-    InitializationError(String),
+    #[error("Processing error: {0}")]
+    ProcessingError(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VisionConfig {
-    pub max_labels: usize,
-    pub confidence_threshold: f32,
+pub struct ImageConfig {
+    pub size: String,
+    pub style: String,
 }
 
-impl Default for VisionConfig {
+impl Default for ImageConfig {
     fn default() -> Self {
-        VisionConfig {
-            max_labels: MAX_LABELS,
-            confidence_threshold: MIN_CONFIDENCE,
+        ImageConfig {
+            size: "1024x1024".to_string(), // Updated to DALL-E 3 default size
+            style: String::from(DEFAULT_STYLE),
         }
     }
 }
@@ -154,33 +168,33 @@ pub fn generate_cache_key(keywords: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio;
 
-    async fn setup_test_analyzer() -> VisionAnalyzer {
+    fn setup_test_generator() -> ImageGenerator {
         let openai_client = Client::from_env().unwrap();
-        VisionAnalyzer::new(&openai_client).unwrap()
+        ImageGenerator::new(&openai_client).unwrap()
     }
 
-    #[tokio::test]
-    async fn test_validate_image_url() {
-        let analyzer = setup_test_analyzer().await;
-        
-        // Test valid image URL
-        let valid_url = "https://example.com/image.jpg";
-        assert!(analyzer.validate_image_url(valid_url).await.unwrap());
-        
-        // Test invalid image URL
-        let invalid_url = "not-a-url";
-        assert!(!analyzer.validate_image_url(invalid_url).await.unwrap());
+    #[test]
+    fn test_prompt_building() {
+        let generator = setup_test_generator();
+        let keywords = vec!["playful".to_string(), "fluffy".to_string()];
+        let prompt = generator.build_prompt(&keywords);
+        assert!(prompt.contains("playful"));
+        assert!(prompt.contains("fluffy"));
+        assert!(prompt.contains("cartoon cat"));
     }
 
-    #[tokio::test]
-    async fn test_analyze_image() {
-        let analyzer = setup_test_analyzer().await;
-        let image_url = "https://example.com/test.jpg";
+    #[test]
+    fn test_image_validation() {
+        let generator = setup_test_generator();
         
-        let keywords = analyzer.analyze_image(image_url).await.unwrap();
-        assert!(!keywords.is_empty());
-        assert!(keywords.len() <= MAX_LABELS);
+        // Test empty data
+        assert!(!generator.validate_image(&[]).unwrap());
+        
+        // Test valid JPEG header
+        assert!(generator.validate_image(&[0xFF, 0xD8, 0xFF, 0xE0]).unwrap());
+        
+        // Test valid PNG header
+        assert!(generator.validate_image(&[0x89, 0x50, 0x4E, 0x47]).unwrap());
     }
 }
