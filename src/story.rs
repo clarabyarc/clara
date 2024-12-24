@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use log::{info, error};
 use reqwest::Client;
 use tokio::time::Duration;
-use rig::Error as RigError;
+use rig_core::Error as RigError;
 
 // Constants for GPT-4 API
 const GPT_API_TIMEOUT: u64 = 30;
@@ -198,12 +198,12 @@ pub enum StoryError {
 // Implement conversion from StoryError to RigError
 impl From<StoryError> for RigError {
     fn from(err: StoryError) -> RigError {
-        RigError::Custom(err.to_string())
+        RigError::Generic(err.to_string())
     }
 }
 
 // Story generation configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoryConfig {
     pub max_length: usize,
     pub temperature: f32,
