@@ -1,5 +1,5 @@
 use log::{info, error};
-use rig::completion::Completion; 
+use rig::completion::{Completion, Message}; 
 use rig::providers::openai::Client;  
 use serde::{Serialize, Deserialize};
 use base64::prelude::*;
@@ -26,7 +26,7 @@ struct ImageGenerationResponse {
     data: Vec<ImageData>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]  // 添加 Serialize
 struct ImageData {
     b64_json: String,
 }
@@ -48,18 +48,26 @@ impl ImageGenerator {
             .agent("dall-e-3")
             .build();
         
-        let response = agent
-            .completion(&format!(
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: format!(
                 "Generate an image: {}. Return the image data in base64 format.",
                 prompt
-            ))
+            ),
+        }];
+
+        let completion_result = agent
+            .completion(&messages[0].content, messages)
             .await
+            .map_err(|e| ImageError::ApiError(e.to_string()))?;
+
+        let response_content = completion_result.content
             .map_err(|e| ImageError::ApiError(e.to_string()))?;
 
         let temp_response = ImageGenerationResponse {
             created: chrono::Utc::now().timestamp() as u64,
             data: vec![ImageData {
-                b64_json: response,
+                b64_json: response_content,
             }],
         };
 
