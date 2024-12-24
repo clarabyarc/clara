@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use log::{info, error};
 use rig::providers::openai::Client;
-use rig::completion::Completion; 
+use rig::completion::{Completion, Message}; 
 use async_trait::async_trait;
 use anyhow::Result;
 
@@ -50,12 +50,20 @@ impl VisionAnalyzer {
             self.config.confidence_threshold
         );
 
-        let response = agent
-            .completion(&prompt)
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: prompt.clone(),
+        }];
+
+        let completion_result = agent
+            .completion(&prompt, messages)
             .await
             .map_err(|e| VisionError::ApiError(e.to_string()))?;
 
-        let keywords = self.process_response(&response)?;
+        let response_content = completion_result.content
+            .map_err(|e| VisionError::ApiError(e.to_string()))?;
+
+        let keywords = self.process_response(&response_content)?;
 
         info!("Image analysis completed. Keywords: {:?}", keywords);
         Ok(keywords)
