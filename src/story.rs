@@ -60,30 +60,27 @@ pub struct StoryGenerator {
 
 impl StoryGenerator {
     // Initialize story generator
-    pub fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<Self, StoryError> {
         let api_key = std::env::var("GPT4_API_KEY")
-            .map_err(|_| "Missing GPT4_API_KEY environment variable")?;
+            .map_err(|_| StoryError::ConfigError("Missing GPT4_API_KEY environment variable".to_string()))?;
             
         let client = Client::builder()
             .timeout(Duration::from_secs(GPT_API_TIMEOUT))
-            .build()?;
+            .build()
+            .map_err(|e| StoryError::InitializationError(e.to_string()))?;
 
         Ok(StoryGenerator {
             client,
             api_key,
-            api_endpoint: "https://api.openai.com/v1/chat/completions".to_string(),
+            api_endpoint: String::from("https://api.openai.com/v1/chat/completions"),
         })
     }
 
-    // Generate story based on keywords and image description
-    pub async fn generate_story(
-        &self,
-        keywords: &[String],
-        character_traits: &[String],
-    ) -> Result<String, Box<dyn Error>> {
+    // Generate story based on keywords
+    pub async fn generate_story(&self, keywords: &[String]) -> Result<String, StoryError> {
         info!("Generating story with keywords: {:?}", keywords);
 
-        let prompt = self.build_prompt(keywords, character_traits);
+        let prompt = self.build_prompt(keywords);
         let request = self.build_request(&prompt);
         let response = self.send_request(request).await?;
         let story = self.process_response(response)?;
@@ -93,14 +90,13 @@ impl StoryGenerator {
     }
 
     // Build story generation prompt
-    fn build_prompt(&self, keywords: &[String], character_traits: &[String]) -> String {
+    fn build_prompt(&self, keywords: &[String]) -> String {
         format!(
-            "Create a short, cheerful story (max {} characters) about a cat with these traits: {}. \
+            "Create a short, cheerful story (max {} characters) about a cat. \
             Include these elements: {}. \
             The story should be child-friendly and end positively. \
             Focus on fun and adventure.",
             MAX_STORY_LENGTH,
-            character_traits.join(", "),
             keywords.join(", ")
         )
     }
@@ -108,59 +104,57 @@ impl StoryGenerator {
     // Build GPT API request
     fn build_request(&self, prompt: &str) -> GPTRequest {
         GPTRequest {
-            model: "gpt-4".to_string(),
+            model: String::from("gpt-4"),
             messages: vec![
                 Message {
-                    role: "system".to_string(),
-                    content: "You are a creative children's story writer. \
-                             Keep stories short, positive, and engaging.".to_string(),
+                    role: String::from("system"),
+                    content: String::from("You are a creative children's story writer. Keep stories short, positive, and engaging."),
                 },
                 Message {
-                    role: "user".to_string(),
-                    content: prompt.to_string(),
+                    role: String::from("user"),
+                    content: String::from(prompt),
                 },
             ],
             temperature: TEMPERATURE,
-            max_tokens: (MAX_STORY_LENGTH as f32 * 1.5) as i32, // Allow some buffer for processing
+            max_tokens: (MAX_STORY_LENGTH as f32 * 1.5) as i32,
             presence_penalty: 0.6,
             frequency_penalty: 0.5,
         }
     }
 
     // Send request to GPT API
-    async fn send_request(&self, request: GPTRequest) -> Result<GPTResponse, Box<dyn Error>> {
+    async fn send_request(&self, request: GPTRequest) -> Result<GPTResponse, StoryError> {
         let response = self.client
             .post(&self.api_endpoint)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&request)
             .send()
-            .await?;
+            .await
+            .map_err(|e| StoryError::ApiError(e.to_string()))?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await?;
+            let error_text = response.text().await
+                .map_err(|e| StoryError::ApiError(e.to_string()))?;
             error!("GPT API error: {}", error_text);
-            return Err(StoryError::ApiError(error_text).into());
+            return Err(StoryError::ApiError(error_text));
         }
 
-        let gpt_response = response.json::<GPTResponse>().await?;
-        Ok(gpt_response)
+        response.json::<GPTResponse>().await
+            .map_err(|e| StoryError::ApiError(e.to_string()))
     }
 
     // Process GPT API response
-    fn process_response(&self, response: GPTResponse) -> Result<String, Box<dyn Error>> {
+    fn process_response(&self, response: GPTResponse) -> Result<String, StoryError> {
         let story = response.choices
             .first()
             .ok_or(StoryError::NoStoryGenerated)?
             .message.content.clone();
 
-        // Ensure story fits within Twitter limit
-        let processed_story = self.format_story(&story)?;
-        
-        Ok(processed_story)
+        self.format_story(&story)
     }
 
     // Format and validate story
-    fn format_story(&self, story: &str) -> Result<String, Box<dyn Error>> {
+    fn format_story(&self, story: &str) -> Result<String, StoryError> {
         let mut processed = story.trim().to_string();
         
         // Remove any hashtags or mentions
@@ -175,7 +169,7 @@ impl StoryGenerator {
 
         // Validate final story
         if processed.is_empty() {
-            return Err(StoryError::InvalidStory.into());
+            return Err(StoryError::InvalidStory);
         }
 
         Ok(processed)
@@ -194,8 +188,11 @@ pub enum StoryError {
     #[error("API error: {0}")]
     ApiError(String),
     
-    #[error("Story generation failed: {0}")]
-    GenerationFailed(String),
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+    
+    #[error("Initialization error: {0}")]
+    InitializationError(String),
 }
 
 // Story generation configuration
@@ -211,18 +208,17 @@ impl Default for StoryConfig {
         StoryConfig {
             max_length: MAX_STORY_LENGTH,
             temperature: TEMPERATURE,
-            style: "cheerful and adventurous".to_string(),
+            style: String::from("cheerful and adventurous"),
         }
     }
 }
 
 // Cache key generator for stories
-pub fn generate_cache_key(keywords: &[String], traits: &[String]) -> String {
+pub fn generate_cache_key(keywords: &[String]) -> String {
     use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
     
     let mut hasher = DefaultHasher::new();
-    let combined = format!("{}-{}", keywords.join("-"), traits.join("-"));
-    combined.hash(&mut hasher);
+    keywords.join("-").hash(&mut hasher);
     format!("story_{:x}", hasher.finish())
 }
