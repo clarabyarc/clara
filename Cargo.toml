@@ -7,8 +7,8 @@ description = "An AI-powered Twitter bot that transforms user avatars into cute 
 license = "MIT"
 
 [dependencies]
-# Rig Framework
-rig-core = { git = "https://github.com/0xPlaygrounds/rig" }
+# Rig Framework - 修改这里使用正确的依赖包名称
+rig = { git = "https://github.com/0xPlaygrounds/rig" }
 
 # Async Runtime
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
