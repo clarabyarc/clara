@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use log::{info, warn};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
-use rig_core::prelude::*;
-use rig_core::providers::openai::Client as OpenAIClient;
-use rig_core::social::{SocialClient, SocialMention, MediaUpload};
+use rig::prelude::*;
+use rig::providers::openai::Client as OpenAIClient;
+use rig::social::{SocialClient, SocialMention, MediaUpload};
 
 const MAX_REQUESTS_PER_DAY: u32 = 3;
 const RATE_LIMIT_HOURS: u64 = 24;
@@ -155,12 +155,12 @@ pub enum TwitterError {
     InvalidMention,
     
     #[error("Client error: {0}")]
-    ClientError(rig_core::Error),
+    ClientError(rig::Error),
 }
 
-impl From<TwitterError> for rig_core::Error {
+impl From<TwitterError> for rig::Error {
     fn from(err: TwitterError) -> Self {
-        rig_core::Error::Provider(err.to_string())
+        rig::Error::Provider(err.to_string())
     }
 }
 
@@ -175,17 +175,17 @@ impl TwitterSocialClient {
 
 #[async_trait::async_trait]
 impl SocialClient for TwitterSocialClient {
-    async fn get_mentions(&self) -> Result<Vec<SocialMention>, rig_core::Error> {
+    async fn get_mentions(&self) -> Result<Vec<SocialMention>, rig::Error> {
         // Implementation would go here
         Ok(Vec::new())
     }
 
-    async fn upload_media(&self, _media: MediaUpload) -> Result<String, rig_core::Error> {
+    async fn upload_media(&self, _media: MediaUpload) -> Result<String, rig::Error> {
         // Implementation would go here
         Ok("media_id".to_string())
     }
 
-    async fn send_reply(&self, _tweet_id: &str, _text: &str, _media_id: Option<&str>) -> Result<(), rig_core::Error> {
+    async fn send_reply(&self, _tweet_id: &str, _text: &str, _media_id: Option<&str>) -> Result<(), rig::Error> {
         // Implementation would go here
         Ok(())
     }
