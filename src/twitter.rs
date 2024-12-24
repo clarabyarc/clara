@@ -1,10 +1,10 @@
-use std::error::Error;
 use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use log::{info, warn, error};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
+use rig::{Error as RigError, Client as RigClient};
 
 // Constants for rate limiting
 const MAX_REQUESTS_PER_DAY: u32 = 3;
@@ -30,13 +30,13 @@ struct RateLimit {
 
 // Main Twitter handler
 pub struct TwitterHandler {
-    rig_client: Arc<rig::RigClient>,
+    rig_client: Arc<RigClient>,
     rate_limits: Arc<Mutex<HashMap<String, RateLimit>>>,
 }
 
 impl TwitterHandler {
     // Initialize Twitter handler
-    pub fn new(rig_client: rig::RigClient) -> Self {
+    pub fn new(rig_client: RigClient) -> Self {
         TwitterHandler {
             rig_client: Arc::new(rig_client),
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
@@ -47,15 +47,29 @@ impl TwitterHandler {
     pub async fn listen_mentions(&self) -> Result<Vec<TwitterMention>, TwitterError> {
         info!("Listening for Twitter mentions...");
         
-        // Get mentions through RIG client
-        let mentions = self.rig_client.get_mentions()
+        let mentions = self.rig_client.get_social_mentions()
             .await
-            .map_err(|e| TwitterError::ApiError(e.to_string()))?;
+            .map_err(TwitterError::ClientError)?;
+            
+        let typed_mentions = mentions.into_iter()
+            .filter_map(|mention| self.convert_to_twitter_mention(mention))
+            .collect::<Vec<_>>();
         
-        // Filter valid mentions
-        let valid_mentions = self.filter_valid_mentions(mentions).await?;
+        let valid_mentions = self.filter_valid_mentions(typed_mentions).await?;
         
         Ok(valid_mentions)
+    }
+
+    // Convert Rig mention to TwitterMention
+    fn convert_to_twitter_mention(&self, rig_mention: rig::SocialMention) -> Option<TwitterMention> {
+        Some(TwitterMention {
+            tweet_id: rig_mention.id?,
+            user_id: rig_mention.user_id?,
+            username: rig_mention.username?,
+            avatar_url: rig_mention.avatar_url?,
+            text: rig_mention.text?,
+            timestamp: rig_mention.created_at?,
+        })
     }
 
     // Check if mention is valid and within rate limits
@@ -66,12 +80,10 @@ impl TwitterHandler {
         let mut valid_mentions = Vec::new();
         
         for mention in mentions {
-            // Check if mention contains the trigger phrase
             if !mention.text.to_lowercase().contains("draw for my avatar") {
                 continue;
             }
 
-            // Check rate limit
             if self.check_rate_limit(&mention.user_id).await? {
                 valid_mentions.push(mention);
             }
@@ -91,19 +103,16 @@ impl TwitterHandler {
                 last_reset: now,
             });
 
-        // Reset counter if 24 hours have passed
         if now.duration_since(rate_limit.last_reset) >= Duration::from_secs(RATE_LIMIT_HOURS * 3600) {
             rate_limit.count = 0;
             rate_limit.last_reset = now;
         }
 
-        // Check if user has exceeded rate limit
         if rate_limit.count >= MAX_REQUESTS_PER_DAY {
             warn!("Rate limit exceeded for user: {}", user_id);
             return Ok(false);
         }
 
-        // Increment counter
         rate_limit.count += 1;
         Ok(true)
     }
@@ -117,26 +126,23 @@ impl TwitterHandler {
     ) -> Result<(), TwitterError> {
         info!("Sending reply to user: {}", mention.username);
         
-        // Upload image and get media ID
         let media_id = self.rig_client.upload_media(&image)
             .await
-            .map_err(|e| TwitterError::ApiError(e.to_string()))?;
+            .map_err(TwitterError::ClientError)?;
         
-        // Construct reply text
         let reply_text = format!(
             "@{} Here's your cat illustration with a story:\n\n{}",
             mention.username,
             story
         );
 
-        // Send tweet with media
-        self.rig_client.reply_with_media(
+        self.rig_client.social_reply(
             &mention.tweet_id,
             &reply_text,
-            &media_id
+            Some(&media_id)
         )
         .await
-        .map_err(|e| TwitterError::ApiError(e.to_string()))?;
+        .map_err(TwitterError::ClientError)?;
 
         info!("Reply sent successfully to: {}", mention.username);
         Ok(())
@@ -149,12 +155,40 @@ pub enum TwitterError {
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
     
-    #[error("API error: {0}")]
-    ApiError(String),
-    
     #[error("Invalid mention format")]
     InvalidMention,
     
     #[error("Client error: {0}")]
-    ClientError(#[from] rig::Error),
+    ClientError(#[from] RigError),
+}
+
+// Implement conversion from TwitterError to RigError
+impl From<TwitterError> for RigError {
+    fn from(err: TwitterError) -> RigError {
+        RigError::Custom(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::sleep;
+
+    #[tokio::test]
+    async fn test_rate_limit() {
+        let client = RigClient::new().unwrap();
+        let handler = TwitterHandler::new(client);
+        let user_id = "test_user";
+
+        // First request should succeed
+        assert!(handler.check_rate_limit(user_id).await.unwrap());
+
+        // Multiple requests up to limit should succeed
+        for _ in 1..MAX_REQUESTS_PER_DAY {
+            assert!(handler.check_rate_limit(user_id).await.unwrap());
+        }
+
+        // Request after limit should fail
+        assert!(!handler.check_rate_limit(user_id).await.unwrap());
+    }
 }
