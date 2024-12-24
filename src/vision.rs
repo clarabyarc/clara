@@ -59,10 +59,7 @@ impl VisionAnalyzer {
             .completion(&messages[0].content, messages)
             .await
             .map_err(|e| VisionError::ApiError(e.to_string()))?
-            .choices[0]
-            .message
-            .content
-            .clone();
+            .content;
 
         let keywords = self.process_response(&response)?;
 
