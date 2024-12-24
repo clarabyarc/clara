@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use log::{info, error};
-use rig::prelude::*;
-use rig::providers::google::vision::{Client as VisionClient, ImageRequest, Feature, FeatureType};
+use rig_core::prelude::*;
+use rig_core::providers::google::vision::{Client as VisionClient, ImageRequest, Feature, FeatureType};
 
 const MAX_LABELS: usize = 4;
 const MIN_CONFIDENCE: f32 = 0.75;
@@ -18,7 +18,7 @@ pub struct VisionHandler {
 }
 
 impl VisionHandler {
-    pub fn new(openai_client: &rig::providers::openai::Client) -> Result<Self, VisionError> {
+    pub fn new(openai_client: &rig_core::providers::openai::Client) -> Result<Self, VisionError> {
         let client = VisionClient::from_env()
             .map_err(|e| VisionError::InitializationError(e.to_string()))?;
 
@@ -95,9 +95,9 @@ pub enum VisionError {
     InitializationError(String),
 }
 
-impl From<VisionError> for rig::Error {
+impl From<VisionError> for rig_core::Error {
     fn from(err: VisionError) -> Self {
-        rig::Error::Provider(err.to_string())
+        rig_core::Error::Provider(err.to_string())
     }
 }
 
@@ -119,7 +119,7 @@ impl Default for VisionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig::providers::openai::Client as OpenAIClient;
+    use rig_core::providers::openai::Client as OpenAIClient;
 
     async fn setup_test_handler() -> VisionHandler {
         let openai_client = OpenAIClient::from_env().unwrap();
