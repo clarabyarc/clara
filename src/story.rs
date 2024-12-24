@@ -31,15 +31,12 @@ impl StoryGenerator {
             .max_tokens(u64::from((self.config.max_length as f32 * 1.5) as u32))
             .build();
 
-        let completion_result = agent
-            .completion(&messages[1].content, messages)  // 添加 messages 参数
+        let response = agent
+            .completion(&messages[1].content, messages)
             .await
             .map_err(|e| StoryError::ApiError(e.to_string()))?;
 
-        let story_content = completion_result.content
-            .map_err(|e| StoryError::ApiError(e.to_string()))?;
-
-        let formatted_story = self.format_story(&story_content)?;
+        let formatted_story = self.format_story(&response)?;
         
         info!("Story generation completed successfully");
         Ok(formatted_story)
