@@ -7,9 +7,7 @@ description = "An AI-powered Twitter bot that transforms user avatars into cute 
 
 [dependencies]
 # Rig Framework and components
-rig = { version = "0.1", features = ["full"] }  # 修改为完整的 rig 包
-rig-core = "0.1"
-rig-sqlite = "0.1"
+rig-core = { git = "https://github.com/0xPlaygrounds/rig" }
 
 # Async Runtime
 tokio = { version = "1.0", features = ["full", "sync"] }
