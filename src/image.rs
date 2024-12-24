@@ -1,18 +1,37 @@
 use log::{info, error};
-use rig::prelude::*;
-use rig::providers::openai::{Client as OpenAIClient, ImageRequest, ImageResponse, ImageSize};
+use rig::completion::Prompt;
+use rig::providers::openai::{self, Client};
 use serde::{Serialize, Deserialize};
 use base64::prelude::*;
+use anyhow::Result;
 
 const DEFAULT_STYLE: &str = "children's book illustration style";
 
 pub struct ImageGenerator {
-    openai_client: OpenAIClient,
+    openai_client: Client,
     config: ImageConfig,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct ImageGenerationRequest {
+    prompt: String,
+    n: i32,
+    size: String,
+    response_format: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImageGenerationResponse {
+    data: Vec<ImageData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImageData {
+    b64_json: String,
+}
+
 impl ImageGenerator {
-    pub fn new(openai_client: &OpenAIClient) -> Result<Self, ImageError> {
+    pub fn new(openai_client: &Client) -> Result<Self> {
         Ok(ImageGenerator {
             openai_client: openai_client.clone(),
             config: ImageConfig::default(),
@@ -23,15 +42,11 @@ impl ImageGenerator {
         info!("Generating cat image with keywords: {:?}", keywords);
 
         let prompt = self.build_prompt(keywords);
+        let request = self.build_request(&prompt);
         
-        let request = ImageRequest::new()
+        let agent = self.openai_client.agent("dall-e-3").build();
+        let response = agent
             .prompt(&prompt)
-            .n(1)
-            .size(ImageSize::S512x512)
-            .response_format("b64_json");
-
-        let response = self.openai_client
-            .create_image(request)
             .await
             .map_err(|e| ImageError::ApiError(e.to_string()))?;
 
@@ -39,6 +54,15 @@ impl ImageGenerator {
         
         info!("Image generation completed successfully");
         Ok(image_data)
+    }
+
+    fn build_request(&self, prompt: &str) -> ImageGenerationRequest {
+        ImageGenerationRequest {
+            prompt: prompt.to_string(),
+            n: 1,
+            size: "512x512".to_string(),
+            response_format: "b64_json".to_string(),
+        }
     }
 
     fn build_prompt(&self, keywords: &[String]) -> String {
@@ -51,8 +75,10 @@ impl ImageGenerator {
         )
     }
 
-    fn process_response(&self, response: ImageResponse) -> Result<Vec<u8>, ImageError> {
-        let image_data = response.data
+    fn process_response(&self, response: String) -> Result<Vec<u8>, ImageError> {
+        let image_data = serde_json::from_str::<ImageGenerationResponse>(&response)
+            .map_err(|e| ImageError::ProcessingError(e.to_string()))?
+            .data
             .first()
             .ok_or(ImageError::NoImageGenerated)?;
 
@@ -65,7 +91,6 @@ impl ImageGenerator {
             return Ok(false);
         }
 
-        // Check for JPEG header
         if image_data.starts_with(&[0xFF, 0xD8, 0xFF]) {
             return Ok(true);
         }
@@ -89,22 +114,16 @@ pub enum ImageError {
     ProcessingError(String),
 }
 
-impl From<ImageError> for rig::Error {
-    fn from(err: ImageError) -> Self {
-        rig::Error::Provider(err.to_string())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageConfig {
-    pub size: ImageSize,
+    pub size: String,
     pub style: String,
 }
 
 impl Default for ImageConfig {
     fn default() -> Self {
         ImageConfig {
-            size: ImageSize::S512x512,
+            size: "512x512".to_string(),
             style: String::from(DEFAULT_STYLE),
         }
     }
