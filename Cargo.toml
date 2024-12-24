@@ -2,68 +2,85 @@
 name = "clara"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Clara Bot Team"]
 description = "An AI-powered Twitter bot that transforms user avatars into cute cat illustrations with stories"
+license = "MIT"
 
 [dependencies]
-# Rig Framework and components
-rig-core = { git = "https://github.com/0xPlaygrounds/rig", features = ["full"] }
-rig-mongodb = { git = "https://github.com/0xPlaygrounds/rig", optional = true }
-rig-lancedb = { git = "https://github.com/0xPlaygrounds/rig", optional = true }
-rig-neo4j = { git = "https://github.com/0xPlaygrounds/rig", optional = true }
-rig-qdrant = { git = "https://github.com/0xPlaygrounds/rig", optional = true }
+# Core Framework
+rig = { git = "https://github.com/0xPlaygrounds/rig", branch = "main", features = ["full"] }
 
 # Async Runtime
-tokio = { version = "1.0", features = ["full", "sync", "macros", "rt-multi-thread"] }
-
-# API Integration
-reqwest = { version = "0.11", features = ["json", "multipart", "stream"] }
-twitter-v2 = "0.1"
-
-# AI Services
-async-openai = "0.17"
+tokio = { version = "1.0", features = ["full"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# HTTP Client
+reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.10"
+
 # Error Handling
 thiserror = "1.0"
-anyhow = "1.0"
 
-# Logging and Configuration
-log = { version = "0.4", features = ["std"] }
-env_logger = "0.10"
+# Time and Date
+chrono = { version = "0.4", features = ["serde"] }
+
+# Environment Variables
 dotenv = "0.15"
 
-# Utilities
-chrono = { version = "0.4", features = ["serde"] }
-rand = "0.8"
+# Base64 Encoding/Decoding
 base64 = "0.21"
+
+# Random Number Generation
+rand = "0.8"
+
+# URL Parsing
 url = "2.4"
 
-# Image Processing
-image = { version = "0.24", features = ["png", "jpeg"] }
-bytes = "1.0"
+# Templating
+handlebars = "4.3"
 
-[features]
-default = []
-mongodb = ["rig-mongodb"]
-lancedb = ["rig-lancedb"]
-neo4j = ["rig-neo4j"]
-qdrant = ["rig-qdrant"]
+# Async Traits
+async-trait = "0.1"
+
+# OAuth Authentication
+oauth2 = "4.4"
+
+# WebSocket Support
+tokio-tungstenite = "0.20"
+
+# JSON Web Tokens
+jsonwebtoken = "9.1"
 
 [dev-dependencies]
-mockall = "0.11"
+# Testing
+mockito = "1.2"
+wiremock = "0.5"
 tokio-test = "0.4"
+pretty_assertions = "1.3"
+
+[features]
+default = ["full"]
+full = []
+minimal = []
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
-panic = 'abort'
+panic = "abort"
 strip = true
 
 [profile.dev]
 opt-level = 0
 debug = true
+
+[workspace]
+members = [
+    ".",
+]
