@@ -1,36 +1,33 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
-use log::{info, warn, error};
-use rig_core::{Error as RigError, Config as RigConfig, Metrics as RigMetrics};
+use log::{info, warn};
+use rig::prelude::*;
+use rig::config::Config;
+use rig::metrics::Metrics as RigMetrics;
 
-// Cache entry timeout (24 hours)
 const CACHE_TIMEOUT_SECS: u64 = 86400;
 
-// Cache entry structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CacheEntry<T> {
-    data: T,
+struct CacheEntry {
+    data: String,
     timestamp: SystemTime,
 }
 
-// Cache manager for storing generated content
 pub struct CacheManager {
-    cache: HashMap<String, CacheEntry<Vec<u8>>>,
-    rig_config: RigConfig,
+    cache: HashMap<String, CacheEntry>,
+    config: Config,
 }
 
 impl CacheManager {
-    // Initialize cache manager
     pub fn new() -> Self {
         CacheManager {
             cache: HashMap::new(),
-            rig_config: RigConfig::default(),
+            config: Config::default(),
         }
     }
 
-    // Store data in cache
-    pub fn set(&mut self, key: &str, data: Vec<u8>) -> Result<(), UtilError> {
+    pub fn set(&mut self, key: &str, data: String) -> Result<(), UtilError> {
         let entry = CacheEntry {
             data,
             timestamp: SystemTime::now(),
@@ -41,8 +38,7 @@ impl CacheManager {
         Ok(())
     }
 
-    // Retrieve data from cache
-    pub fn get(&mut self, key: &str) -> Option<Vec<u8>> {
+    pub fn get(&mut self, key: &str) -> Option<String> {
         self.cleanup();
         
         self.cache.get(key).and_then(|entry| {
@@ -55,80 +51,22 @@ impl CacheManager {
         })
     }
 
-    // Check if key exists in cache
     pub fn exists(&self, key: &str) -> bool {
         self.cache.contains_key(key)
     }
 
-    // Check if cache entry is still valid
-    fn is_entry_valid(&self, entry: &CacheEntry<Vec<u8>>) -> bool {
+    fn is_entry_valid(&self, entry: &CacheEntry) -> bool {
         entry.timestamp
             .elapsed()
             .map(|elapsed| elapsed < Duration::from_secs(CACHE_TIMEOUT_SECS))
             .unwrap_or(false)
     }
 
-    // Clean up expired entries
     fn cleanup(&mut self) {
         self.cache.retain(|_, entry| self.is_entry_valid(entry));
     }
 }
 
-// Rate limiter implementation using Rig's rate limiting
-pub struct RateLimiter {
-    rig_config: RigConfig,
-    window: Duration,
-    max_calls: usize,
-}
-
-impl RateLimiter {
-    pub fn new(window_secs: u64, max_calls: usize) -> Self {
-        RateLimiter {
-            rig_config: RigConfig::default(),
-            window: Duration::from_secs(window_secs),
-            max_calls,
-        }
-    }
-
-    pub async fn check_rate_limit(&self, key: &str) -> Result<bool, UtilError> {
-        // Use Rig's rate limiting
-        Ok(true) // Placeholder - implement actual Rig rate limiting
-    }
-}
-
-// Text sanitization functions
-pub fn sanitize_text(text: &str) -> String {
-    text.chars()
-        .filter(|&c| {
-            c.is_alphanumeric() || c.is_whitespace() || matches!(c, '-' | '.' | ',' | '!')
-        })
-        .collect()
-}
-
-// Error handling utilities
-#[derive(Debug, thiserror::Error)]
-pub enum UtilError {
-    #[error("Cache error: {0}")]
-    CacheError(String),
-    
-    #[error("Rate limit exceeded")]
-    RateLimitExceeded,
-    
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
-    
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-}
-
-// Implement conversion from UtilError to RigError
-impl From<UtilError> for RigError {
-    fn from(err: UtilError) -> RigError {
-        RigError::Generic(err.to_string())
-    }
-}
-
-// Validation utilities using Rig's validation
 pub struct Validator;
 
 impl Validator {
@@ -175,13 +113,33 @@ impl Validator {
     }
 }
 
-// Configuration management using Rig's config
+#[derive(Debug, thiserror::Error)]
+pub enum UtilError {
+    #[error("Cache error: {0}")]
+    CacheError(String),
+    
+    #[error("Rate limit exceeded")]
+    RateLimitExceeded,
+    
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+    
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+}
+
+impl From<UtilError> for rig::Error {
+    fn from(err: UtilError) -> Self {
+        rig::Error::Provider(err.to_string())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub twitter_config: TwitterConfig,
-    pub vision_config: VisionConfig,
-    pub dalle_config: DalleConfig,
-    pub gpt_config: GptConfig,
+    pub twitter: TwitterConfig,
+    pub vision: VisionConfig,
+    pub image: ImageConfig,
+    pub story: StoryConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,40 +155,42 @@ pub struct VisionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DalleConfig {
-    pub image_size: String,
+pub struct ImageConfig {
+    pub size: String,
     pub style: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GptConfig {
+pub struct StoryConfig {
     pub max_tokens: usize,
     pub temperature: f32,
 }
 
 impl AppConfig {
     pub async fn load() -> Result<Self, UtilError> {
-        // Use Rig's config loading
-        Ok(AppConfig::default())
+        let config = Config::from_env()
+            .map_err(|e| UtilError::ConfigError(e.to_string()))?;
+            
+        Ok(AppConfig::from(config))
     }
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         AppConfig {
-            twitter_config: TwitterConfig {
+            twitter: TwitterConfig {
                 rate_limit_window: 3600,
                 max_calls_per_window: 100,
             },
-            vision_config: VisionConfig {
+            vision: VisionConfig {
                 confidence_threshold: 0.75,
                 max_labels: 4,
             },
-            dalle_config: DalleConfig {
-                image_size: String::from("512x512"),
+            image: ImageConfig {
+                size: String::from("512x512"),
                 style: String::from("children's book illustration"),
             },
-            gpt_config: GptConfig {
+            story: StoryConfig {
                 max_tokens: 280,
                 temperature: 0.7,
             },
@@ -238,21 +198,22 @@ impl Default for AppConfig {
     }
 }
 
-// Metrics collection using Rig's metrics
-#[derive(Debug, Default)]
-pub struct Metrics {
-    rig_metrics: Option<RigMetrics>,
+pub struct AppMetrics {
+    metrics: RigMetrics,
     requests: usize,
     successes: usize,
     failures: usize,
     average_response_time: f64,
 }
 
-impl Metrics {
-    pub fn new() -> Self {
-        Metrics {
-            rig_metrics: None,
-            ..Default::default()
+impl AppMetrics {
+    pub fn new(metrics: RigMetrics) -> Self {
+        AppMetrics {
+            metrics,
+            requests: 0,
+            successes: 0,
+            failures: 0,
+            average_response_time: 0.0,
         }
     }
 
@@ -266,6 +227,9 @@ impl Metrics {
 
         let rt_secs = response_time.as_secs_f64();
         self.average_response_time = (self.average_response_time * (self.requests - 1) as f64 + rt_secs) / self.requests as f64;
+        
+        // Record metrics using rig's metrics
+        self.metrics.record_request(success, response_time);
     }
 
     pub fn get_stats(&self) -> String {
@@ -300,7 +264,7 @@ mod tests {
     fn test_cache_manager() {
         let mut cache = CacheManager::new();
         let key = "test_key";
-        let data = vec![1, 2, 3];
+        let data = "test_data".to_string();
         
         assert!(cache.set(key, data.clone()).is_ok());
         assert_eq!(cache.get(key), Some(data));
