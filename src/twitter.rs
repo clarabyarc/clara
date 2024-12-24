@@ -36,21 +36,21 @@ pub struct TwitterHandler {
 
 impl TwitterHandler {
     // Initialize Twitter handler
-    pub fn new() -> Result<Self, Box<dyn Error>> {
-        let rig_client = Arc::new(rig::RigClient::new()?);
-        
-        Ok(TwitterHandler {
-            rig_client,
+    pub fn new(rig_client: rig::RigClient) -> Self {
+        TwitterHandler {
+            rig_client: Arc::new(rig_client),
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
-        })
+        }
     }
 
     // Listen for mentions
-    pub async fn listen_mentions(&self) -> Result<Vec<TwitterMention>, Box<dyn Error>> {
+    pub async fn listen_mentions(&self) -> Result<Vec<TwitterMention>, TwitterError> {
         info!("Listening for Twitter mentions...");
         
         // Get mentions through RIG client
-        let mentions = self.rig_client.get_mentions().await?;
+        let mentions = self.rig_client.get_mentions()
+            .await
+            .map_err(|e| TwitterError::ApiError(e.to_string()))?;
         
         // Filter valid mentions
         let valid_mentions = self.filter_valid_mentions(mentions).await?;
@@ -62,7 +62,7 @@ impl TwitterHandler {
     async fn filter_valid_mentions(
         &self,
         mentions: Vec<TwitterMention>
-    ) -> Result<Vec<TwitterMention>, Box<dyn Error>> {
+    ) -> Result<Vec<TwitterMention>, TwitterError> {
         let mut valid_mentions = Vec::new();
         
         for mention in mentions {
@@ -81,7 +81,7 @@ impl TwitterHandler {
     }
 
     // Rate limit checking
-    async fn check_rate_limit(&self, user_id: &str) -> Result<bool, Box<dyn Error>> {
+    async fn check_rate_limit(&self, user_id: &str) -> Result<bool, TwitterError> {
         let mut rate_limits = self.rate_limits.lock().await;
         
         let now = Instant::now();
@@ -92,7 +92,7 @@ impl TwitterHandler {
             });
 
         // Reset counter if 24 hours have passed
-        if now.duration_since(rate_limit.last_reset) > Duration::from_hours(RATE_LIMIT_HOURS) {
+        if now.duration_since(rate_limit.last_reset) >= Duration::from_secs(RATE_LIMIT_HOURS * 3600) {
             rate_limit.count = 0;
             rate_limit.last_reset = now;
         }
@@ -114,11 +114,13 @@ impl TwitterHandler {
         mention: &TwitterMention,
         image: Vec<u8>,
         story: String,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), TwitterError> {
         info!("Sending reply to user: {}", mention.username);
         
         // Upload image and get media ID
-        let media_id = self.rig_client.upload_media(&image).await?;
+        let media_id = self.rig_client.upload_media(&image)
+            .await
+            .map_err(|e| TwitterError::ApiError(e.to_string()))?;
         
         // Construct reply text
         let reply_text = format!(
@@ -132,7 +134,9 @@ impl TwitterHandler {
             &mention.tweet_id,
             &reply_text,
             &media_id
-        ).await?;
+        )
+        .await
+        .map_err(|e| TwitterError::ApiError(e.to_string()))?;
 
         info!("Reply sent successfully to: {}", mention.username);
         Ok(())
@@ -144,8 +148,13 @@ impl TwitterHandler {
 pub enum TwitterError {
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
+    
     #[error("API error: {0}")]
     ApiError(String),
+    
     #[error("Invalid mention format")]
     InvalidMention,
+    
+    #[error("Client error: {0}")]
+    ClientError(#[from] rig::Error),
 }
