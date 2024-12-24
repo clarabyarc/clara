@@ -1,18 +1,35 @@
 [package]
-name = "clara-bot"
+name = "clara"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
-description = "An AI cat artist bot powered by RIG framework"
 
 [dependencies]
-rig = { git = "https://github.com/0xPlaygrounds/rig" }
-tokio = { version = "1.28", features = ["full"] }
+# Core RIG dependency
+rig-core = { git = "https://github.com/0xPlaygrounds/rig" }
+
+# APIs
+openai = "0.11"
+twitter-api = "0.10"
+google-vision = "0.8"
+
+# Async runtime and networking
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+futures = "0.3"
+
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-dotenv = "0.15"
-chrono = "0.4"
-async-trait = "0.1"
+
+# Logging and error handling
 log = "0.4"
 env_logger = "0.9"
 thiserror = "1.0"
+
+# Utils
+dotenv = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.13"
+
+[dev-dependencies]
+tokio-test = "0.4"
