@@ -2,8 +2,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use log::{info, error};
 use dotenv::dotenv;
-use rig::prelude::*;
-use rig::providers::openai::Client as OpenAIClient;
+use rig_core::prelude::*;
+use rig_core::providers::openai::Client as OpenAIClient;
 
 mod twitter;
 mod vision;
@@ -134,7 +134,7 @@ impl Clara {
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("Rig error: {0}")]
-    RigError(#[from] rig::Error),
+    RigError(#[from] rig_core::Error),
 
     #[error("Twitter error: {0}")]
     TwitterError(#[from] twitter::TwitterError),
