@@ -58,22 +58,16 @@ impl VisionAnalyzer {
         let response = agent
             .completion(&messages[0].content, messages)
             .await
-            .map_err(|e| VisionError::ApiError(e.to_string()))?;
+            .map_err(|e| VisionError::ApiError(e.to_string()))?
+            .choices[0]
+            .message
+            .content
+            .clone();
 
         let keywords = self.process_response(&response)?;
 
         info!("Image analysis completed. Keywords: {:?}", keywords);
         Ok(keywords)
-    }
-
-    fn build_prompt(&self, keywords: &[String]) -> String {
-        let keywords_str = keywords.join(", ");
-        format!(
-            "A cute cartoon cat with characteristics of {}, drawn in {}, \
-            warm colors, friendly expression, simple background, safe for children",
-            keywords_str,
-            self.config.style
-        )
     }
 
     fn process_response(&self, response: &str) -> Result<Vec<String>, VisionError> {
