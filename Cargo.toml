@@ -7,15 +7,15 @@ description = "An AI-powered Twitter bot that transforms user avatars into cute 
 license = "MIT"
 
 [dependencies]
-# Rig Framework and its components
-rig = { git = "https://github.com/0xPlaygrounds/rig", package = "rig-core" }
+# Core AI Framework
+rig = { git = "https://github.com/0xPlaygrounds/rig", package = "rig-core", features = ["openai"] }
 
-# Async Runtime and Traits
+# Async Runtime
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "full"] }
 async-trait = "0.1"
 futures = "0.3"
 
-# API and Data Handling
+# HTTP Client and Serialization
 reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -26,21 +26,32 @@ env_logger = "0.10"
 thiserror = "1.0"
 anyhow = "1.0"
 
-# Utilities
+# Utility Libraries
 dotenv = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.21"
 oauth2 = "4.4"
 
+# Optional: Vector Storage (uncomment if needed)
+# rig-mongodb = { git = "https://github.com/0xPlaygrounds/rig" }
+
 [dev-dependencies]
 mockito = "1.2"
 tokio-test = "0.4"
 
+# Release Profile Optimization
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
+panic = 'abort'  # Reduces binary size
 
+# Development Profile
 [profile.dev]
 opt-level = 0
 debug = true
+
+# Example Configuration
+[[example]]
+name = "basic_usage"
+path = "examples/basic_usage.rs"
