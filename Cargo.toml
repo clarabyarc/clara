@@ -4,36 +4,27 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-# Core RIG dependency
-rig-core = { git = "https://github.com/0xPlaygrounds/rig" }
-
-# AI Services
-openai = { version = "1.0.0-alpha.18" }
-
-# Twitter API
-twitter-v2 = "0.1.8"
-oauth2 = "4.4"
-
-# Async runtime and networking
 tokio = { version = "1.0", features = ["full"] }
-reqwest = { version = "0.11", features = ["json", "multipart"] }
-futures = "0.3"
-
-# Serialization
+rig = { git = "https://github.com/0xPlaygrounds/rig" }
+base64 = "0.21"
+thiserror = "1.0"
+log = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# Logging and error handling
-log = "0.4"
-env_logger = "0.9"
-thiserror = "1.0"
-
-# Utils
+anyhow = "1.0"
+async-trait = "0.1"
+futures = "0.3"
+reqwest = { version = "0.11", features = ["json"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+chrono = "0.4"
 dotenv = "0.15"
-chrono = { version = "0.4", features = ["serde"] }
-base64 = { version = "0.21" } 
-rand = "0.8"
+uuid = { version = "1.0", features = ["v4"] }
+axum = "0.6"
+tower = "0.4"
+tower-http = { version = "0.4", features = ["trace"] }
+config = "0.13"
 
 [dev-dependencies]
 tokio-test = "0.4"
-mock-it = "0.4"
+mock-it = "0.5"
