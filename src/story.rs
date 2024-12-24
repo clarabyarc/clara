@@ -1,6 +1,6 @@
 use log::{info, error};
-use rig::completion::{Chat, Message, Prompt};
-use rig::providers::openai::{self, Client};
+use rig::completion::{Completion, Message}; 
+use rig::providers::openai::Client; 
 use serde::{Deserialize, Serialize};
 
 const MAX_STORY_LENGTH: usize = 280; // Twitter character limit
@@ -32,7 +32,7 @@ impl StoryGenerator {
             .build();
 
         let response = agent
-            .completion(&messages[1].content)
+            .completion(&messages[1].content)  
             .await
             .map_err(|e| StoryError::ApiError(e.to_string()))?;
 
