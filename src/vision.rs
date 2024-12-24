@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use log::{info, error};
-use rig::prelude::*;
-use rig::providers::google::vision::{Client as VisionClient, ImageRequest, Feature, FeatureType};
+use rig::providers::openai::Client;
+use async_trait::async_trait;
 
 const MAX_LABELS: usize = 4;
 const MIN_CONFIDENCE: f32 = 0.75;
@@ -12,18 +12,21 @@ struct LabelAnnotation {
     score: f32,
 }
 
+#[async_trait]
+trait VisionService {
+    async fn analyze_image(&self, image_url: &str) -> Result<Vec<LabelAnnotation>, VisionError>;
+    async fn validate_image_url(&self, url: &str) -> Result<bool, VisionError>;
+}
+
 pub struct VisionHandler {
-    client: VisionClient,
+    client: Client,
     config: VisionConfig,
 }
 
 impl VisionHandler {
-    pub fn new(openai_client: &rig::providers::openai::Client) -> Result<Self, VisionError> {
-        let client = VisionClient::from_env()
-            .map_err(|e| VisionError::InitializationError(e.to_string()))?;
-
+    pub fn new(openai_client: &Client) -> Result<Self, VisionError> {
         Ok(VisionHandler {
-            client,
+            client: openai_client.clone(),
             config: VisionConfig::default(),
         })
     }
@@ -31,52 +34,62 @@ impl VisionHandler {
     pub async fn analyze_image(&self, image_url: &str) -> Result<Vec<String>, VisionError> {
         info!("Analyzing image: {}", image_url);
 
-        let request = self.build_request(image_url);
-        let response = self.send_request(request).await?;
-        let keywords = self.process_response(response)?;
+        let agent = self.client.agent("gpt-4-vision-preview").build();
+        
+        let prompt = format!(
+            "Analyze this image and provide up to {} labels with confidence above {}. \
+            Format: label:confidence",
+            self.config.max_labels,
+            self.config.confidence_threshold
+        );
+
+        let response = agent
+            .image_prompt(image_url, &prompt)
+            .await
+            .map_err(|e| VisionError::ApiError(e.to_string()))?;
+
+        let keywords = self.process_response(&response)?;
 
         info!("Image analysis completed. Keywords: {:?}", keywords);
         Ok(keywords)
     }
 
-    fn build_request(&self, image_url: &str) -> ImageRequest {
-        ImageRequest::new()
-            .image_uri(image_url)
-            .add_feature(Feature::new(
-                FeatureType::LabelDetection,
-                self.config.max_labels as i32
-            ))
-    }
-
-    async fn send_request(&self, request: ImageRequest) -> Result<Vec<LabelAnnotation>, VisionError> {
-        let response = self.client
-            .analyze_image(request)
-            .await
-            .map_err(|e| VisionError::ApiError(e.to_string()))?;
-
-        Ok(response.label_annotations)
-    }
-
-    fn process_response(&self, annotations: Vec<LabelAnnotation>) -> Result<Vec<String>, VisionError> {
-        let mut keywords: Vec<String> = annotations
-            .into_iter()
-            .filter(|label| label.score >= self.config.confidence_threshold)
-            .take(self.config.max_labels)
-            .map(|label| label.description.to_lowercase())
-            .collect();
+    fn process_response(&self, response: &str) -> Result<Vec<String>, VisionError> {
+        let mut keywords = Vec::new();
+        
+        for line in response.lines() {
+            if let Some((label, confidence)) = line.split_once(':') {
+                if let Ok(score) = confidence.trim().parse::<f32>() {
+                    if score >= self.config.confidence_threshold {
+                        keywords.push(label.trim().to_lowercase());
+                    }
+                }
+            }
+        }
 
         if keywords.is_empty() {
             keywords.push("person".to_string());
         }
 
-        Ok(keywords)
+        Ok(keywords.into_iter().take(self.config.max_labels).collect())
     }
 
     pub async fn validate_image_url(&self, url: &str) -> Result<bool, VisionError> {
-        self.client
-            .validate_image_url(url)
+        if !url.starts_with("http") || !url.contains('.') {
+            return Ok(false);
+        }
+
+        let response = reqwest::get(url)
             .await
-            .map_err(|_| VisionError::InvalidImageUrl)
+            .map_err(|_| VisionError::InvalidImageUrl)?;
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        Ok(content_type.starts_with("image/"))
     }
 }
 
@@ -93,12 +106,6 @@ pub enum VisionError {
     
     #[error("Initialization error: {0}")]
     InitializationError(String),
-}
-
-impl From<VisionError> for rig::Error {
-    fn from(err: VisionError) -> Self {
-        rig::Error::Provider(err.to_string())
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,10 +126,9 @@ impl Default for VisionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig::providers::openai::Client as OpenAIClient;
 
     async fn setup_test_handler() -> VisionHandler {
-        let openai_client = OpenAIClient::from_env().unwrap();
+        let openai_client = Client::from_env().unwrap();
         VisionHandler::new(&openai_client).unwrap()
     }
 
