@@ -1,4 +1,5 @@
 use log::{info, error};
+use rig::completion::Prompt;
 use rig::providers::openai::Client;  
 use serde::{Serialize, Deserialize};
 use base64::prelude::*;
@@ -19,7 +20,7 @@ struct ImageGenerationRequest {
     response_format: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ImageGenerationResponse {
     created: u64,
     data: Vec<ImageData>,
@@ -47,16 +48,14 @@ impl ImageGenerator {
             .agent("dall-e-3")
             .build();
         
-        // Using prompt instead of image_generation
         let response = agent
-            .prompt(&format!(
+            .completion(&format!(
                 "Generate an image: {}. Return the image data in base64 format.",
                 prompt
             ))
             .await
             .map_err(|e| ImageError::ApiError(e.to_string()))?;
 
-        // Create a temporary response structure
         let temp_response = ImageGenerationResponse {
             created: chrono::Utc::now().timestamp() as u64,
             data: vec![ImageData {
@@ -64,7 +63,15 @@ impl ImageGenerator {
             }],
         };
 
-        let image_data = self.process_response(&serde_json::to_string(&temp_response)?)?;
+        let json_str = serde_json::to_string(&temp_response)
+            .map_err(|e| ImageError::ProcessingError(e.to_string()))?;
+            
+        let image_data = self.process_response(&json_str)?;
+        
+        // Validate the generated image
+        if !self.validate_image(&image_data)? {
+            return Err(ImageError::InvalidImageFormat);
+        }
         
         info!("Image generation completed successfully");
         Ok(image_data)
@@ -81,7 +88,6 @@ impl ImageGenerator {
     }
 
     fn process_response(&self, response: &str) -> Result<Vec<u8>, ImageError> {
-        // Create a temporary binding for the parsed response
         let parsed_response = serde_json::from_str::<ImageGenerationResponse>(response)
             .map_err(|e| ImageError::ProcessingError(e.to_string()))?;
         
@@ -108,7 +114,7 @@ impl ImageGenerator {
             return Ok(true);
         }
 
-        Err(ImageError::InvalidImageFormat)
+        Ok(false)
     }
 }
 
