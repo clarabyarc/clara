@@ -7,11 +7,14 @@ description = "An AI-powered Twitter bot that transforms user avatars into cute 
 license = "MIT"
 
 [dependencies]
-# Rig Framework 
+# Rig Framework and its components
 rig = { git = "https://github.com/0xPlaygrounds/rig", package = "rig-core" }
+rig-openai = { git = "https://github.com/0xPlaygrounds/rig" }
 
-# Async Runtime
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+# Async Runtime and Traits
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "full"] }
+async-trait = "0.1"
+futures = "0.3"
 
 # API and Data Handling
 reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
@@ -22,6 +25,7 @@ serde_json = "1.0"
 log = "0.4"
 env_logger = "0.10"
 thiserror = "1.0"
+anyhow = "1.0"
 
 # Utilities
 dotenv = "0.15"
