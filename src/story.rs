@@ -1,6 +1,6 @@
 use log::{info, error};
-use rig::completion::Message;
-use rig::providers::openai::Client;
+use rig::completion::{Chat, Message, Prompt};
+use rig::providers::openai::{self, Client};
 use serde::{Deserialize, Serialize};
 
 const MAX_STORY_LENGTH: usize = 280; // Twitter character limit
@@ -23,6 +23,7 @@ impl StoryGenerator {
         info!("Generating story with keywords: {:?}", keywords);
 
         let prompt = self.build_prompt(keywords);
+        let messages = self.build_messages(&prompt);
         
         let agent = self.openai_client
             .agent("gpt-4")
@@ -31,7 +32,7 @@ impl StoryGenerator {
             .build();
 
         let response = agent
-            .prompt(&prompt)
+            .completion(&messages[1].content)
             .await
             .map_err(|e| StoryError::ApiError(e.to_string()))?;
 
@@ -42,19 +43,31 @@ impl StoryGenerator {
     }
 
     fn build_prompt(&self, keywords: &[String]) -> String {
-        let system_context = "You are a creative children's story writer. \
-            Keep stories short, positive, and engaging.";
-        
         format!(
-            "{}\n\nCreate a short, {} story (max {} characters) about a cat. \
+            "Create a short, {} story (max {} characters) about a cat. \
             Include these elements: {}. \
             The story should be child-friendly and end positively. \
             Focus on fun and adventure.",
-            system_context,
             self.config.style,
             self.config.max_length,
             keywords.join(", ")
         )
+    }
+
+    fn build_messages(&self, prompt: &str) -> Vec<Message> {
+        vec![
+            Message {
+                role: "system".to_string(),
+                content: "You are a creative children's story writer. Keep stories short, positive, and engaging.".to_string(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: format!("{}\n\n{}", 
+                    "You are a creative children's story writer. Keep stories short, positive, and engaging.",
+                    prompt
+                ),
+            }
+        ]
     }
 
     fn format_story(&self, story: &str) -> Result<String, StoryError> {
