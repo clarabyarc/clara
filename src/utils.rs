@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
-use log::{info, warn};
-use rig::config::{Config, ConfigBuilder};
-use rig::metrics::Metrics;
 
 const CACHE_TIMEOUT_SECS: u64 = 86400;
 
