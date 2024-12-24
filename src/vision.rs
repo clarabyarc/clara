@@ -44,7 +44,7 @@ impl VisionHandler {
         );
 
         let response = agent
-            .image_prompt(image_url, &prompt)
+            .prompt(&format!("Image URL: {}\n{}", image_url, prompt))
             .await
             .map_err(|e| VisionError::ApiError(e.to_string()))?;
 
