@@ -1,8 +1,8 @@
-use std::error::Error;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use log::{info, error};
 use dotenv::dotenv;
+use rig::{Error as RigError, Client as RigClient};
 
 mod twitter;
 mod vision;
@@ -28,7 +28,7 @@ pub struct Clara {
 
 impl Clara {
     // Initialize Clara instance
-    pub async fn new() -> Result<Self, Box<dyn Error>> {
+    pub async fn new() -> Result<Self, AppError> {
         // Load environment variables
         dotenv().ok();
         
@@ -37,8 +37,10 @@ impl Clara {
         
         info!("Initializing Clara bot...");
         
+        let rig_client = RigClient::new().map_err(|e| AppError::RigError(e))?;
+        
         // Create handlers with default configuration
-        let twitter_handler = Arc::new(TwitterHandler::new(rig::RigClient::new()?));
+        let twitter_handler = Arc::new(TwitterHandler::new(rig_client));
         let vision_handler = Arc::new(VisionHandler::new()?);
         let image_generator = Arc::new(ImageGenerator::new()?);
         let story_generator = Arc::new(StoryGenerator::new()?);
@@ -55,10 +57,9 @@ impl Clara {
     }
 
     // Start the main service loop
-    pub async fn start(&self) -> Result<(), Box<dyn Error>> {
+    pub async fn start(&self) -> Result<(), AppError> {
         info!("Clara bot is starting...");
         
-        // Initialize request semaphore for concurrent request limiting
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.max_concurrent_requests));
         
         loop {
@@ -72,7 +73,6 @@ impl Clara {
                         let story_generator = self.story_generator.clone();
                         let cache_manager = self.cache_manager.clone();
                         
-                        // Spawn a new task for each mention
                         tokio::spawn(async move {
                             let _permit = sem_clone.acquire().await.unwrap();
                             if let Err(e) = Self::handle_mention(
@@ -104,30 +104,22 @@ impl Clara {
         image_generator: Arc<ImageGenerator>,
         story_generator: Arc<StoryGenerator>,
         cache_manager: Arc<Mutex<CacheManager>>,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<(), AppError> {
         info!("Processing mention from @{}", mention.username);
 
-        // Check cache first
         let cache_key = format!("mention_{}", mention.tweet_id);
         if cache_manager.lock().await.exists(&cache_key) {
             info!("Found cached response for mention");
             return Ok(());
         }
 
-        // Analyze user's avatar
         let keywords = vision_handler.analyze_image(&mention.avatar_url).await?;
-        
-        // Generate cat image based on keywords
         let image_data = image_generator.generate_cat_image(&keywords).await?;
-        
-        // Generate story based on keywords
         let story = story_generator.generate_story(&keywords).await?;
         
-        // Send reply with image and story
         twitter_handler.send_reply(&mention, image_data, story).await?;
         
-        // Cache the response
-        cache_manager.lock().await.set(&cache_key, "completed");
+        cache_manager.lock().await.set(&cache_key, "completed".as_bytes().to_vec())?;
         
         info!("Successfully processed mention from @{}", mention.username);
         Ok(())
@@ -137,6 +129,9 @@ impl Clara {
 // Custom error type for application
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
+    #[error("Rig error: {0}")]
+    RigError(#[from] RigError),
+
     #[error("Twitter error: {0}")]
     TwitterError(#[from] twitter::TwitterError),
     
@@ -148,11 +143,13 @@ pub enum AppError {
     
     #[error("Story error: {0}")]
     StoryError(#[from] story::StoryError),
+
+    #[error("Cache error: {0}")]
+    CacheError(#[from] utils::UtilError),
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    // Create and start Clara instance
+async fn main() -> Result<(), AppError> {
     let clara = Clara::new().await?;
     clara.start().await?;
     
