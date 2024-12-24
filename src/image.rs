@@ -1,5 +1,5 @@
 use log::{info, error};
-use rig::completion::Prompt;
+use rig::completion::Completion;  // 修改导入
 use rig::providers::openai::Client;  
 use serde::{Serialize, Deserialize};
 use base64::prelude::*;
