@@ -2,8 +2,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use log::{info, error};
 use dotenv::dotenv;
-use rig::prelude::*;
-use rig::providers::openai::Client as OpenAIClient;
+use rig::providers::openai::{self, Client};
+use rig::completion::Prompt;
 
 mod twitter;
 mod vision;
@@ -19,7 +19,7 @@ use crate::utils::CacheManager;
 
 // Main application structure
 pub struct Clara {
-    openai_client: OpenAIClient,
+    openai_client: Client,
     twitter_handler: Arc<TwitterHandler>,
     vision_handler: Arc<VisionHandler>,
     image_generator: Arc<ImageGenerator>,
@@ -37,8 +37,8 @@ impl Clara {
         info!("Initializing Clara bot...");
         
         // Initialize OpenAI client
-        let openai_client = OpenAIClient::from_env()
-            .map_err(|e| AppError::RigError(e))?;
+        let openai_client = Client::from_env()
+            .map_err(|e| AppError::RigError(e.to_string()))?;
         
         // Create handlers with OpenAI client
         let twitter_handler = Arc::new(TwitterHandler::new(&openai_client));
@@ -134,7 +134,7 @@ impl Clara {
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("Rig error: {0}")]
-    RigError(#[from] rig::Error),
+    RigError(String),
 
     #[error("Twitter error: {0}")]
     TwitterError(#[from] twitter::TwitterError),
@@ -150,6 +150,12 @@ pub enum AppError {
 
     #[error("Cache error: {0}")]
     CacheError(String),
+}
+
+impl From<Box<dyn std::error::Error>> for AppError {
+    fn from(err: Box<dyn std::error::Error>) -> Self {
+        AppError::RigError(err.to_string())
+    }
 }
 
 #[tokio::main]
