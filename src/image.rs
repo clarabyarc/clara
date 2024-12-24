@@ -1,9 +1,8 @@
-use std::error::Error;
-use serde::{Deserialize, Serialize};
 use log::{info, error};
 use reqwest::Client;
 use tokio::time::Duration;
 use base64::prelude::*;
+use rig::Error as RigError;
 
 // Constants for DALL-E API
 const DALLE_API_TIMEOUT: u64 = 30;
@@ -40,13 +39,14 @@ pub struct ImageGenerator {
 
 impl ImageGenerator {
     // Initialize image generator
-    pub fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<Self, ImageError> {
         let api_key = std::env::var("DALLE_API_KEY")
-            .map_err(|_| "Missing DALLE_API_KEY environment variable")?;
+            .map_err(|_| ImageError::ConfigError("Missing DALLE_API_KEY environment variable".to_string()))?;
             
         let client = Client::builder()
             .timeout(Duration::from_secs(DALLE_API_TIMEOUT))
-            .build()?;
+            .build()
+            .map_err(|e| ImageError::ClientError(e.to_string()))?;
 
         Ok(ImageGenerator {
             client,
@@ -56,7 +56,7 @@ impl ImageGenerator {
     }
 
     // Generate image based on keywords
-    pub async fn generate_cat_image(&self, keywords: &[String]) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub async fn generate_cat_image(&self, keywords: &[String]) -> Result<Vec<u8>, ImageError> {
         info!("Generating cat image with keywords: {:?}", keywords);
 
         let prompt = self.build_prompt(keywords);
@@ -90,56 +90,53 @@ impl ImageGenerator {
     }
 
     // Send request to DALL-E API
-    async fn send_request(&self, request: DallERequest) -> Result<DallEResponse, Box<dyn Error>> {
+    async fn send_request(&self, request: DallERequest) -> Result<DallEResponse, ImageError> {
         let response = self.client
             .post(&self.api_endpoint)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .json(&request)
             .send()
-            .await?;
+            .await
+            .map_err(|e| ImageError::ApiError(e.to_string()))?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await?;
+            let error_text = response.text().await
+                .map_err(|e| ImageError::ApiError(e.to_string()))?;
             error!("DALL-E API error: {}", error_text);
-            return Err(ImageError::ApiError(error_text).into());
+            return Err(ImageError::ApiError(error_text));
         }
 
-        let dalle_response = response.json::<DallEResponse>().await?;
-        Ok(dalle_response)
+        response.json::<DallEResponse>().await
+            .map_err(|e| ImageError::ApiError(e.to_string()))
     }
 
     // Process DALL-E API response
-    fn process_response(&self, response: DallEResponse) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn process_response(&self, response: DallEResponse) -> Result<Vec<u8>, ImageError> {
         let image_data = response.data
             .first()
             .ok_or(ImageError::NoImageGenerated)?;
 
         // Decode base64 image data
-        let image_bytes = BASE64_STANDARD.decode(&image_data.b64_json)?;
-
-        Ok(image_bytes)
+        BASE64_STANDARD.decode(&image_data.b64_json)
+            .map_err(|e| ImageError::ProcessingError(e.to_string()))
     }
 
     // Apply post-processing to generated image
-    pub fn post_process_image(&self, image_data: Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
-        // For now, just return the original image
-        // TODO: Implement image post-processing if needed
+    pub fn post_process_image(&self, image_data: Vec<u8>) -> Result<Vec<u8>, ImageError> {
         Ok(image_data)
     }
 
     // Validate generated image
-    pub fn validate_image(&self, image_data: &[u8]) -> Result<bool, Box<dyn Error>> {
-        // Check if image data is valid
+    pub fn validate_image(&self, image_data: &[u8]) -> Result<bool, ImageError> {
         if image_data.is_empty() {
             return Ok(false);
         }
 
-        // Check if image data starts with JPEG header
         if image_data.starts_with(&[0xFF, 0xD8, 0xFF]) {
             return Ok(true);
         }
 
-        Err(ImageError::InvalidImageFormat.into())
+        Err(ImageError::InvalidImageFormat)
     }
 }
 
@@ -155,8 +152,21 @@ pub enum ImageError {
     #[error("API error: {0}")]
     ApiError(String),
     
-    #[error("Image generation failed: {0}")]
-    GenerationFailed(String),
+    #[error("Client error: {0}")]
+    ClientError(String),
+    
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+    
+    #[error("Processing error: {0}")]
+    ProcessingError(String),
+}
+
+// Implement conversion from ImageError to RigError
+impl From<ImageError> for RigError {
+    fn from(err: ImageError) -> RigError {
+        RigError::Custom(err.to_string())
+    }
 }
 
 // Image generation configuration
