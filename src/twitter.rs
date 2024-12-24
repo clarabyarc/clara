@@ -1,16 +1,16 @@
 use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
-use log::{info, warn, error};
+use log::{info, warn};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
-use rig_core::{Error as RigError, Client as RigClient, SocialMention};
+use rig::prelude::*;
+use rig::providers::openai::Client as OpenAIClient;
+use rig::social::{SocialClient, SocialMention, MediaUpload};
 
-// Constants for rate limiting
 const MAX_REQUESTS_PER_DAY: u32 = 3;
 const RATE_LIMIT_HOURS: u64 = 24;
 
-// Structure for Twitter mention
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TwitterMention {
     pub tweet_id: String,
@@ -21,35 +21,37 @@ pub struct TwitterMention {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-// Structure for rate limiting
 #[derive(Debug)]
 struct RateLimit {
     count: u32,
     last_reset: Instant,
 }
 
-// Main Twitter handler
 pub struct TwitterHandler {
-    rig_client: Arc<RigClient>,
+    client: OpenAIClient,
+    social_client: Arc<Box<dyn SocialClient>>,
     rate_limits: Arc<Mutex<HashMap<String, RateLimit>>>,
 }
 
 impl TwitterHandler {
-    // Initialize Twitter handler
-    pub fn new(rig_client: RigClient) -> Self {
+    pub fn new(openai_client: &OpenAIClient) -> Self {
+        // Initialize Twitter client using rig's social client
+        let social_client = Arc::new(Box::new(TwitterSocialClient::new()) as Box<dyn SocialClient>);
+        
         TwitterHandler {
-            rig_client: Arc::new(rig_client),
+            client: openai_client.clone(),
+            social_client,
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
-    // Listen for mentions
     pub async fn listen_mentions(&self) -> Result<Vec<TwitterMention>, TwitterError> {
         info!("Listening for Twitter mentions...");
         
-        let mentions = self.rig_client.get_social_mentions()
+        let mentions = self.social_client
+            .get_mentions()
             .await
-            .map_err(|e| TwitterError::ClientError(RigError::Generic(e.to_string())))?;
+            .map_err(TwitterError::ClientError)?;
             
         let typed_mentions = mentions.into_iter()
             .filter_map(|mention| self.convert_to_twitter_mention(mention))
@@ -60,19 +62,17 @@ impl TwitterHandler {
         Ok(valid_mentions)
     }
 
-    // Convert Rig mention to TwitterMention
-    fn convert_to_twitter_mention(&self, rig_mention: SocialMention) -> Option<TwitterMention> {
+    fn convert_to_twitter_mention(&self, mention: SocialMention) -> Option<TwitterMention> {
         Some(TwitterMention {
-            tweet_id: rig_mention.id?,
-            user_id: rig_mention.user_id?,
-            username: rig_mention.username?,
-            avatar_url: rig_mention.avatar_url?,
-            text: rig_mention.text?,
-            timestamp: rig_mention.created_at?,
+            tweet_id: mention.id,
+            user_id: mention.user_id,
+            username: mention.username,
+            avatar_url: mention.avatar_url,
+            text: mention.text,
+            timestamp: mention.created_at,
         })
     }
 
-    // Check if mention is valid and within rate limits
     async fn filter_valid_mentions(
         &self,
         mentions: Vec<TwitterMention>
@@ -92,7 +92,6 @@ impl TwitterHandler {
         Ok(valid_mentions)
     }
 
-    // Rate limit checking
     async fn check_rate_limit(&self, user_id: &str) -> Result<bool, TwitterError> {
         let mut rate_limits = self.rate_limits.lock().await;
         
@@ -117,7 +116,6 @@ impl TwitterHandler {
         Ok(true)
     }
 
-    // Send reply to user
     pub async fn send_reply(
         &self,
         mention: &TwitterMention,
@@ -126,9 +124,11 @@ impl TwitterHandler {
     ) -> Result<(), TwitterError> {
         info!("Sending reply to user: {}", mention.username);
         
-        let media_id = self.rig_client.upload_media(&image)
+        let media_upload = MediaUpload::new(image, "image/jpeg".to_string());
+        let media_id = self.social_client
+            .upload_media(media_upload)
             .await
-            .map_err(|e| TwitterError::ClientError(RigError::Generic(e.to_string())))?;
+            .map_err(TwitterError::ClientError)?;
         
         let reply_text = format!(
             "@{} Here's your cat illustration with a story:\n\n{}",
@@ -136,20 +136,16 @@ impl TwitterHandler {
             story
         );
 
-        self.rig_client.social_reply(
-            &mention.tweet_id,
-            &reply_text,
-            Some(&media_id)
-        )
-        .await
-        .map_err(|e| TwitterError::ClientError(RigError::Generic(e.to_string())))?;
+        self.social_client
+            .send_reply(&mention.tweet_id, &reply_text, Some(&media_id))
+            .await
+            .map_err(TwitterError::ClientError)?;
 
         info!("Reply sent successfully to: {}", mention.username);
         Ok(())
     }
 }
 
-// Error handling
 #[derive(Debug, thiserror::Error)]
 pub enum TwitterError {
     #[error("Rate limit exceeded")]
@@ -159,25 +155,50 @@ pub enum TwitterError {
     InvalidMention,
     
     #[error("Client error: {0}")]
-    ClientError(#[from] RigError),
+    ClientError(rig::Error),
 }
 
-// Implement conversion from TwitterError to RigError
-impl From<TwitterError> for RigError {
-    fn from(err: TwitterError) -> RigError {
-        RigError::Generic(err.to_string())
+impl From<TwitterError> for rig::Error {
+    fn from(err: TwitterError) -> Self {
+        rig::Error::Provider(err.to_string())
+    }
+}
+
+// Mock implementation for testing
+struct TwitterSocialClient {}
+
+impl TwitterSocialClient {
+    fn new() -> Self {
+        TwitterSocialClient {}
+    }
+}
+
+#[async_trait::async_trait]
+impl SocialClient for TwitterSocialClient {
+    async fn get_mentions(&self) -> Result<Vec<SocialMention>, rig::Error> {
+        // Implementation would go here
+        Ok(Vec::new())
+    }
+
+    async fn upload_media(&self, _media: MediaUpload) -> Result<String, rig::Error> {
+        // Implementation would go here
+        Ok("media_id".to_string())
+    }
+
+    async fn send_reply(&self, _tweet_id: &str, _text: &str, _media_id: Option<&str>) -> Result<(), rig::Error> {
+        // Implementation would go here
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::sleep;
 
     #[tokio::test]
     async fn test_rate_limit() {
-        let client = RigClient::default().unwrap();
-        let handler = TwitterHandler::new(client);
+        let openai_client = OpenAIClient::from_env().unwrap();
+        let handler = TwitterHandler::new(&openai_client);
         let user_id = "test_user";
 
         // First request should succeed
