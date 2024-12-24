@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use log::{info, warn};
-use rig::prelude::*;
-use rig::config::Config;
-use rig::metrics::Metrics as RigMetrics;
+use rig_core::prelude::*;
+use rig_core::config::Config;
+use rig_core::metrics::Metrics as RigMetrics;
 
 const CACHE_TIMEOUT_SECS: u64 = 86400;
 
@@ -128,9 +128,9 @@ pub enum UtilError {
     ConfigError(String),
 }
 
-impl From<UtilError> for rig::Error {
+impl From<UtilError> for rig_core::Error {
     fn from(err: UtilError) -> Self {
-        rig::Error::Provider(err.to_string())
+        rig_core::Error::Provider(err.to_string())
     }
 }
 
