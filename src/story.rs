@@ -1,159 +1,82 @@
-use serde::{Deserialize, Serialize};
 use log::{info, error};
-use reqwest::Client;
-use tokio::time::Duration;
-use rig_core::Error as RigError;
+use rig::prelude::*;
+use rig::providers::openai::{Client as OpenAIClient, ChatRequest, ChatMessage, Role};
+use serde::{Deserialize, Serialize};
 
-// Constants for GPT-4 API
-const GPT_API_TIMEOUT: u64 = 30;
 const MAX_STORY_LENGTH: usize = 280; // Twitter character limit
 const TEMPERATURE: f32 = 0.7;
 
-// GPT API request structure
-#[derive(Debug, Serialize)]
-struct GPTRequest {
-    model: String,
-    messages: Vec<Message>,
-    temperature: f32,
-    max_tokens: i32,
-    presence_penalty: f32,
-    frequency_penalty: f32,
-}
-
-#[derive(Debug, Serialize)]
-struct Message {
-    role: String,
-    content: String,
-}
-
-// GPT API response structure
-#[derive(Debug, Deserialize)]
-struct GPTResponse {
-    choices: Vec<Choice>,
-    usage: Usage,
-}
-
-#[derive(Debug, Deserialize)]
-struct Choice {
-    message: MessageResponse,
-    finish_reason: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct MessageResponse {
-    content: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct Usage {
-    total_tokens: i32,
-    prompt_tokens: i32,
-    completion_tokens: i32,
-}
-
-// Main story generator
 pub struct StoryGenerator {
-    client: Client,
-    api_key: String,
-    api_endpoint: String,
+    openai_client: OpenAIClient,
+    config: StoryConfig,
 }
 
 impl StoryGenerator {
-    // Initialize story generator
-    pub fn new() -> Result<Self, StoryError> {
-        let api_key = std::env::var("GPT4_API_KEY")
-            .map_err(|_| StoryError::ConfigError("Missing GPT4_API_KEY environment variable".to_string()))?;
-            
-        let client = Client::builder()
-            .timeout(Duration::from_secs(GPT_API_TIMEOUT))
-            .build()
-            .map_err(|e| StoryError::InitializationError(e.to_string()))?;
-
+    pub fn new(openai_client: &OpenAIClient) -> Result<Self, StoryError> {
         Ok(StoryGenerator {
-            client,
-            api_key,
-            api_endpoint: String::from("https://api.openai.com/v1/chat/completions"),
+            openai_client: openai_client.clone(),
+            config: StoryConfig::default(),
         })
     }
 
-    // Generate story based on keywords
     pub async fn generate_story(&self, keywords: &[String]) -> Result<String, StoryError> {
         info!("Generating story with keywords: {:?}", keywords);
 
         let prompt = self.build_prompt(keywords);
         let request = self.build_request(&prompt);
-        let response = self.send_request(request).await?;
-        let story = self.process_response(response)?;
+        
+        let response = self.openai_client
+            .chat(request)
+            .await
+            .map_err(|e| StoryError::ApiError(e.to_string()))?;
 
+        let story = response
+            .choices
+            .first()
+            .ok_or(StoryError::NoStoryGenerated)?
+            .message
+            .content
+            .clone();
+
+        let formatted_story = self.format_story(&story)?;
+        
         info!("Story generation completed successfully");
-        Ok(story)
+        Ok(formatted_story)
     }
 
-    // Build story generation prompt
     fn build_prompt(&self, keywords: &[String]) -> String {
         format!(
-            "Create a short, cheerful story (max {} characters) about a cat. \
+            "Create a short, {} story (max {} characters) about a cat. \
             Include these elements: {}. \
             The story should be child-friendly and end positively. \
             Focus on fun and adventure.",
-            MAX_STORY_LENGTH,
+            self.config.style,
+            self.config.max_length,
             keywords.join(", ")
         )
     }
 
-    // Build GPT API request
-    fn build_request(&self, prompt: &str) -> GPTRequest {
-        GPTRequest {
-            model: String::from("gpt-4"),
-            messages: vec![
-                Message {
-                    role: String::from("system"),
-                    content: String::from("You are a creative children's story writer. Keep stories short, positive, and engaging."),
+    fn build_request(&self, prompt: &str) -> ChatRequest {
+        ChatRequest::new()
+            .model("gpt-4")
+            .temperature(self.config.temperature)
+            .max_tokens((self.config.max_length as f32 * 1.5) as i32)
+            .presence_penalty(0.6)
+            .frequency_penalty(0.5)
+            .messages(vec![
+                ChatMessage {
+                    role: Role::System,
+                    content: "You are a creative children's story writer. Keep stories short, positive, and engaging.".into(),
+                    name: None,
                 },
-                Message {
-                    role: String::from("user"),
-                    content: String::from(prompt),
+                ChatMessage {
+                    role: Role::User,
+                    content: prompt.into(),
+                    name: None,
                 },
-            ],
-            temperature: TEMPERATURE,
-            max_tokens: (MAX_STORY_LENGTH as f32 * 1.5) as i32,
-            presence_penalty: 0.6,
-            frequency_penalty: 0.5,
-        }
+            ])
     }
 
-    // Send request to GPT API
-    async fn send_request(&self, request: GPTRequest) -> Result<GPTResponse, StoryError> {
-        let response = self.client
-            .post(&self.api_endpoint)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| StoryError::ApiError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let error_text = response.text().await
-                .map_err(|e| StoryError::ApiError(e.to_string()))?;
-            error!("GPT API error: {}", error_text);
-            return Err(StoryError::ApiError(error_text));
-        }
-
-        response.json::<GPTResponse>().await
-            .map_err(|e| StoryError::ApiError(e.to_string()))
-    }
-
-    // Process GPT API response
-    fn process_response(&self, response: GPTResponse) -> Result<String, StoryError> {
-        let story = response.choices
-            .first()
-            .ok_or(StoryError::NoStoryGenerated)?
-            .message.content.clone();
-
-        self.format_story(&story)
-    }
-
-    // Format and validate story
     fn format_story(&self, story: &str) -> Result<String, StoryError> {
         let mut processed = story.trim().to_string();
         
@@ -161,9 +84,9 @@ impl StoryGenerator {
         processed = processed.replace(|c: char| c == '@' || c == '#', "");
         
         // Ensure story fits within character limit
-        if processed.len() > MAX_STORY_LENGTH {
+        if processed.len() > self.config.max_length {
             processed = processed.chars()
-                .take(MAX_STORY_LENGTH - 3)
+                .take(self.config.max_length - 3)
                 .collect::<String>() + "...";
         }
 
@@ -176,7 +99,6 @@ impl StoryGenerator {
     }
 }
 
-// Custom error types for story operations
 #[derive(Debug, thiserror::Error)]
 pub enum StoryError {
     #[error("No story was generated")]
@@ -187,22 +109,14 @@ pub enum StoryError {
     
     #[error("API error: {0}")]
     ApiError(String),
-    
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-    
-    #[error("Initialization error: {0}")]
-    InitializationError(String),
 }
 
-// Implement conversion from StoryError to RigError
-impl From<StoryError> for RigError {
-    fn from(err: StoryError) -> RigError {
-        RigError::Generic(err.to_string())
+impl From<StoryError> for rig::Error {
+    fn from(err: StoryError) -> Self {
+        rig::Error::Provider(err.to_string())
     }
 }
 
-// Story generation configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoryConfig {
     pub max_length: usize,
@@ -220,7 +134,6 @@ impl Default for StoryConfig {
     }
 }
 
-// Cache key generator for stories
 pub fn generate_cache_key(keywords: &[String]) -> String {
     use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
@@ -234,9 +147,14 @@ pub fn generate_cache_key(keywords: &[String]) -> String {
 mod tests {
     use super::*;
 
+    fn setup_test_generator() -> StoryGenerator {
+        let openai_client = OpenAIClient::from_env().unwrap();
+        StoryGenerator::new(&openai_client).unwrap()
+    }
+
     #[test]
     fn test_story_formatting() {
-        let generator = StoryGenerator::new().unwrap();
+        let generator = setup_test_generator();
         let story = "Hello @user! This is a #test story.";
         let formatted = generator.format_story(story).unwrap();
         assert!(!formatted.contains('@'));
@@ -245,7 +163,7 @@ mod tests {
 
     #[test]
     fn test_story_length_limit() {
-        let generator = StoryGenerator::new().unwrap();
+        let generator = setup_test_generator();
         let long_story = "a".repeat(MAX_STORY_LENGTH + 100);
         let formatted = generator.format_story(&long_story).unwrap();
         assert!(formatted.len() <= MAX_STORY_LENGTH);
