@@ -1,6 +1,6 @@
 use log::{info, error};
-use rig_core::prelude::*;
-use rig_core::providers::openai::{Client as OpenAIClient, ImageRequest, ImageResponse, ImageSize};
+use rig::prelude::*;
+use rig::providers::openai::{Client as OpenAIClient, ImageRequest, ImageResponse, ImageSize};
 use serde::{Serialize, Deserialize};
 use base64::prelude::*;
 
@@ -89,9 +89,9 @@ pub enum ImageError {
     ProcessingError(String),
 }
 
-impl From<ImageError> for rig_core::Error {
+impl From<ImageError> for rig::Error {
     fn from(err: ImageError) -> Self {
-        rig_core::Error::Provider(err.to_string())
+        rig::Error::Provider(err.to_string())
     }
 }
 
