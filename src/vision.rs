@@ -58,10 +58,14 @@ impl VisionAnalyzer {
         let response = agent
             .completion(&messages[0].content, messages)
             .await
-            .map_err(|e| VisionError::ApiError(e.to_string()))?;
+            .map_err(|e| VisionError::ApiError(e.to_string()))?
+            .first()
+            .ok_or(VisionError::AnalysisFailed("No response received".to_string()))?
+            .message
+            .content
+            .clone();
 
-        let analysis_text = response.text().map_err(|e| VisionError::ApiError(e.to_string()))?;
-        let keywords = self.process_response(&analysis_text)?;
+        let keywords = self.process_response(&response)?;
 
         info!("Image analysis completed. Keywords: {:?}", keywords);
         Ok(keywords)
