@@ -7,9 +7,8 @@ edition = "2021"
 # Core RIG dependency
 rig-core = { git = "https://github.com/0xPlaygrounds/rig" }
 
-# AI and Cloud Services
-openai = { version = "0.11" }
-google-cloud = { version = "0.3", features = ["vision"] }
+# AI Services
+openai = { version = "1.0.0-alpha.18" }
 
 # Twitter API
 twitter-v2 = "0.1.8"
