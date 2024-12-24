@@ -35,10 +35,7 @@ impl StoryGenerator {
             .completion(&messages[1].content, messages)
             .await
             .map_err(|e| StoryError::ApiError(e.to_string()))?
-            .choices[0]
-            .message
-            .content
-            .clone();
+            .content;
 
         let formatted_story = self.format_story(&response)?;
         
