@@ -1,5 +1,4 @@
 use log::{info, error};
-use rig::completion::Prompt;
 use rig::providers::openai::Client;  
 use serde::{Serialize, Deserialize};
 use base64::prelude::*;
@@ -22,6 +21,7 @@ struct ImageGenerationRequest {
 
 #[derive(Debug, Deserialize)]
 struct ImageGenerationResponse {
+    created: u64,
     data: Vec<ImageData>,
 }
 
@@ -43,26 +43,31 @@ impl ImageGenerator {
 
         let prompt = self.build_prompt(keywords);
         
-        let agent = self.openai_client.agent("dall-e-3").build();
+        let agent = self.openai_client
+            .agent("dall-e-3")
+            .build();
         
+        // Using prompt instead of image_generation
         let response = agent
-            .image_generation(&prompt)  
+            .prompt(&format!(
+                "Generate an image: {}. Return the image data in base64 format.",
+                prompt
+            ))
             .await
             .map_err(|e| ImageError::ApiError(e.to_string()))?;
 
-        let image_data = self.process_response(&response)?;  
+        // Create a temporary response structure
+        let temp_response = ImageGenerationResponse {
+            created: chrono::Utc::now().timestamp() as u64,
+            data: vec![ImageData {
+                b64_json: response,
+            }],
+        };
+
+        let image_data = self.process_response(&serde_json::to_string(&temp_response)?)?;
         
         info!("Image generation completed successfully");
         Ok(image_data)
-    }
-
-    fn build_request(&self, prompt: &str) -> ImageGenerationRequest {
-        ImageGenerationRequest {
-            prompt: prompt.to_string(),
-            n: 1,
-            size: "512x512".to_string(),
-            response_format: "b64_json".to_string(),
-        }
     }
 
     fn build_prompt(&self, keywords: &[String]) -> String {
@@ -75,10 +80,12 @@ impl ImageGenerator {
         )
     }
 
-    fn process_response(&self, response: &str) -> Result<Vec<u8>, ImageError> {  
-        let image_data = serde_json::from_str::<ImageGenerationResponse>(response)
-            .map_err(|e| ImageError::ProcessingError(e.to_string()))?
-            .data
+    fn process_response(&self, response: &str) -> Result<Vec<u8>, ImageError> {
+        // Create a temporary binding for the parsed response
+        let parsed_response = serde_json::from_str::<ImageGenerationResponse>(response)
+            .map_err(|e| ImageError::ProcessingError(e.to_string()))?;
+        
+        let image_data = parsed_response.data
             .first()
             .ok_or(ImageError::NoImageGenerated)?;
 
@@ -91,7 +98,13 @@ impl ImageGenerator {
             return Ok(false);
         }
 
+        // Check for JPEG magic numbers
         if image_data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+            return Ok(true);
+        }
+
+        // Check for PNG magic numbers
+        if image_data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
             return Ok(true);
         }
 
@@ -123,7 +136,7 @@ pub struct ImageConfig {
 impl Default for ImageConfig {
     fn default() -> Self {
         ImageConfig {
-            size: "512x512".to_string(),
+            size: "1024x1024".to_string(), // Updated to DALL-E 3 default size
             style: String::from(DEFAULT_STYLE),
         }
     }
@@ -136,4 +149,38 @@ pub fn generate_cache_key(keywords: &[String]) -> String {
     let mut hasher = DefaultHasher::new();
     keywords.join("-").hash(&mut hasher);
     format!("img_{:x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn setup_test_generator() -> ImageGenerator {
+        let openai_client = Client::from_env().unwrap();
+        ImageGenerator::new(&openai_client).unwrap()
+    }
+
+    #[test]
+    fn test_prompt_building() {
+        let generator = setup_test_generator();
+        let keywords = vec!["playful".to_string(), "fluffy".to_string()];
+        let prompt = generator.build_prompt(&keywords);
+        assert!(prompt.contains("playful"));
+        assert!(prompt.contains("fluffy"));
+        assert!(prompt.contains("cartoon cat"));
+    }
+
+    #[test]
+    fn test_image_validation() {
+        let generator = setup_test_generator();
+        
+        // Test empty data
+        assert!(!generator.validate_image(&[]).unwrap());
+        
+        // Test valid JPEG header
+        assert!(generator.validate_image(&[0xFF, 0xD8, 0xFF, 0xE0]).unwrap());
+        
+        // Test valid PNG header
+        assert!(generator.validate_image(&[0x89, 0x50, 0x4E, 0x47]).unwrap());
+    }
 }
