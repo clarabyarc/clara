@@ -7,18 +7,19 @@ description = "An AI-powered Twitter bot that transforms user avatars into cute 
 
 [dependencies]
 # Rig Framework and components
+rig = { version = "0.1", features = ["full"] }  # 修改为完整的 rig 包
 rig-core = "0.1"
 rig-sqlite = "0.1"
 
 # Async Runtime
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.0", features = ["full", "sync"] }
 
 # API Integration
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "multipart"] }
 twitter-v2 = "0.1"
 
 # AI Services
-openai = { version = "1.0.0-alpha.18" }  # 修改了这行
+openai = { version = "1.0.0-alpha.18" }
 async-openai = "0.17"
 
 # Serialization
