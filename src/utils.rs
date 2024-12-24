@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use log::{info, warn, error};
-use rig::{Error as RigError, Config as RigConfig};
+use rig_core::{Error as RigError, Config as RigConfig, Metrics as RigMetrics};
 
 // Cache entry timeout (24 hours)
 const CACHE_TIMEOUT_SECS: u64 = 86400;
@@ -124,7 +124,7 @@ pub enum UtilError {
 // Implement conversion from UtilError to RigError
 impl From<UtilError> for RigError {
     fn from(err: UtilError) -> RigError {
-        RigError::Custom(err.to_string())
+        RigError::Generic(err.to_string())
     }
 }
 
@@ -241,7 +241,7 @@ impl Default for AppConfig {
 // Metrics collection using Rig's metrics
 #[derive(Debug, Default)]
 pub struct Metrics {
-    rig_metrics: Option<rig::Metrics>,
+    rig_metrics: Option<RigMetrics>,
     requests: usize,
     successes: usize,
     failures: usize,
