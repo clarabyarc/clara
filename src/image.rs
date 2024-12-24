@@ -60,10 +60,7 @@ impl ImageGenerator {
             .completion(&messages[0].content, messages)
             .await
             .map_err(|e| ImageError::ApiError(e.to_string()))?
-            .choices[0]
-            .message
-            .content
-            .clone();
+            .content;
 
         let temp_response = ImageGenerationResponse {
             created: chrono::Utc::now().timestamp() as u64,
