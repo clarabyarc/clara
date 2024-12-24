@@ -1,5 +1,5 @@
 use log::{info, error};
-use rig::completion::{Prompt, Message, Chat};
+use rig::completion::{Prompt, Message};
 use rig::providers::openai::{self, Client};
 use serde::{Deserialize, Serialize};
 
@@ -27,9 +27,8 @@ impl StoryGenerator {
         
         let agent = self.openai_client
             .agent("gpt-4")
-            .temperature(self.config.temperature)
-            .max_tokens((self.config.max_length as f32 * 1.5) as u32)
-            .presence_penalty(0.6)
+            .temperature(f64::from(self.config.temperature))
+            .max_tokens(u64::from((self.config.max_length as f32 * 1.5) as u32))
             .frequency_penalty(0.5)
             .build();
 
@@ -58,10 +57,14 @@ impl StoryGenerator {
 
     fn build_messages(&self, prompt: &str) -> Vec<Message> {
         vec![
-            Message::system(
-                "You are a creative children's story writer. Keep stories short, positive, and engaging."
-            ),
-            Message::user(prompt)
+            Message {
+                role: "system".to_string(),
+                content: "You are a creative children's story writer. Keep stories short, positive, and engaging.".to_string(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            }
         ]
     }
 
