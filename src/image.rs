@@ -26,7 +26,7 @@ struct ImageGenerationResponse {
     data: Vec<ImageData>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]  // 添加 Serialize
+#[derive(Debug, Deserialize, Serialize)]
 struct ImageData {
     b64_json: String,
 }
@@ -56,18 +56,15 @@ impl ImageGenerator {
             ),
         }];
 
-        let completion_result = agent
+        let response = agent
             .completion(&messages[0].content, messages)
             .await
-            .map_err(|e| ImageError::ApiError(e.to_string()))?;
-
-        let response_content = completion_result.content
             .map_err(|e| ImageError::ApiError(e.to_string()))?;
 
         let temp_response = ImageGenerationResponse {
             created: chrono::Utc::now().timestamp() as u64,
             data: vec![ImageData {
-                b64_json: response_content,
+                b64_json: response.to_string(),
             }],
         };
 
