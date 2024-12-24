@@ -20,7 +20,7 @@ struct AnnotateImageResponse {
     #[serde(default)]
     label_annotations: Vec<LabelAnnotation>,
     #[serde(default)]
-    error: Option<VisionError>,
+    error: Option<ApiVisionError>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,8 +29,9 @@ struct LabelAnnotation {
     score: f32,
 }
 
+// Renamed to avoid conflict with the main error enum
 #[derive(Debug, Deserialize)]
-struct VisionError {
+struct ApiVisionError {
     code: i32,
     message: String,
 }
@@ -86,12 +87,14 @@ impl VisionHandler {
     }
 
     // Analyze image from URL
-    pub async fn analyze_image(&self, image_url: &str) -> Result<Vec<String>, Box<dyn Error>> {
+    pub async fn analyze_image(&self, image_url: &str) -> Result<Vec<String>, VisionError> {
         info!("Analyzing image: {}", image_url);
 
         let request = self.build_request(image_url);
-        let response = self.send_request(request).await?;
-        let keywords = self.process_response(response)?;
+        let response = self.send_request(request).await
+            .map_err(|e| VisionError::AnalysisFailed(e.to_string()))?;
+        let keywords = self.process_response(response)
+            .map_err(|e| VisionError::AnalysisFailed(e.to_string()))?;
 
         info!("Image analysis completed. Keywords: {:?}", keywords);
         Ok(keywords)
@@ -124,7 +127,7 @@ impl VisionHandler {
         if !response.status().is_success() {
             let error_text = response.text().await?;
             error!("Vision API error: {}", error_text);
-            return Err(format!("Vision API error: {}", error_text).into());
+            return Err(VisionError::ApiError(error_text).into());
         }
 
         let vision_response = response.json::<VisionApiResponse>().await?;
@@ -138,7 +141,7 @@ impl VisionHandler {
             .ok_or("Empty response from Vision API")?;
 
         if let Some(error) = &annotations.error {
-            return Err(format!("Vision API error: {}", error.message).into());
+            return Err(VisionError::ApiError(error.message.clone()).into());
         }
 
         // Filter and transform labels
@@ -158,15 +161,17 @@ impl VisionHandler {
     }
 
     // Validate image URL
-    pub async fn validate_image_url(&self, url: &str) -> Result<bool, Box<dyn Error>> {
+    pub async fn validate_image_url(&self, url: &str) -> Result<bool, VisionError> {
         let response = self.client
             .head(url)
             .send()
-            .await?;
+            .await
+            .map_err(|e| VisionError::InvalidImageUrl)?;
 
         // Check if the URL points to a valid image
         if let Some(content_type) = response.headers().get("content-type") {
-            let content_type = content_type.to_str()?;
+            let content_type = content_type.to_str()
+                .map_err(|_| VisionError::InvalidImageUrl)?;
             Ok(content_type.starts_with("image/"))
         } else {
             Ok(false)
@@ -183,4 +188,6 @@ pub enum VisionError {
     InvalidImageUrl,
     #[error("API error: {0}")]
     ApiError(String),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 }
