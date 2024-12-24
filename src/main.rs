@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use log::{info, error};
 use dotenv::dotenv;
-use rig::{Error as RigError, Client as RigClient};
+use rig_core::{Client as RigClient};
 
 mod twitter;
 mod vision;
@@ -33,11 +33,13 @@ impl Clara {
         dotenv().ok();
         
         // Initialize logger
-        env_logger::init();
+        env_logger::Builder::from_default_env()
+            .init();
         
         info!("Initializing Clara bot...");
         
-        let rig_client = RigClient::new().map_err(|e| AppError::RigError(e))?;
+        let rig_client = RigClient::default()
+            .map_err(|e| AppError::RigError(rig_core::Error::Generic(e.to_string())))?;
         
         // Create handlers with default configuration
         let twitter_handler = Arc::new(TwitterHandler::new(rig_client));
@@ -130,7 +132,7 @@ impl Clara {
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("Rig error: {0}")]
-    RigError(#[from] RigError),
+    RigError(#[from] rig_core::Error),
 
     #[error("Twitter error: {0}")]
     TwitterError(#[from] twitter::TwitterError),
