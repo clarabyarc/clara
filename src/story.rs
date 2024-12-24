@@ -1,8 +1,8 @@
-use std::error::Error;
 use serde::{Deserialize, Serialize};
 use log::{info, error};
 use reqwest::Client;
 use tokio::time::Duration;
+use rig::Error as RigError;
 
 // Constants for GPT-4 API
 const GPT_API_TIMEOUT: u64 = 30;
@@ -195,6 +195,13 @@ pub enum StoryError {
     InitializationError(String),
 }
 
+// Implement conversion from StoryError to RigError
+impl From<StoryError> for RigError {
+    fn from(err: StoryError) -> RigError {
+        RigError::Custom(err.to_string())
+    }
+}
+
 // Story generation configuration
 #[derive(Debug, Clone)]
 pub struct StoryConfig {
@@ -221,4 +228,27 @@ pub fn generate_cache_key(keywords: &[String]) -> String {
     let mut hasher = DefaultHasher::new();
     keywords.join("-").hash(&mut hasher);
     format!("story_{:x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_story_formatting() {
+        let generator = StoryGenerator::new().unwrap();
+        let story = "Hello @user! This is a #test story.";
+        let formatted = generator.format_story(story).unwrap();
+        assert!(!formatted.contains('@'));
+        assert!(!formatted.contains('#'));
+    }
+
+    #[test]
+    fn test_story_length_limit() {
+        let generator = StoryGenerator::new().unwrap();
+        let long_story = "a".repeat(MAX_STORY_LENGTH + 100);
+        let formatted = generator.format_story(&long_story).unwrap();
+        assert!(formatted.len() <= MAX_STORY_LENGTH);
+        assert!(formatted.ends_with("..."));
+    }
 }
