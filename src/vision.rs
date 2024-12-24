@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use log::{info, error};
 use rig::providers::openai::Client;
-use rig::completion::{Chat, Message, Prompt}; // Added Prompt trait
+use rig::completion::Completion; 
 use async_trait::async_trait;
 use anyhow::Result;
 
