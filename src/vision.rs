@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use log::{info, error};
 use rig::providers::openai::Client;
-use rig::completion::{Chat, Message}; // Added Chat trait
+use rig::completion::{Chat, Message, Prompt}; // Added Prompt trait
 use async_trait::async_trait;
 use anyhow::Result;
 
@@ -40,28 +40,18 @@ impl VisionAnalyzer {
             .agent("gpt-4-vision-preview")
             .build();
         
-        // Using structured message for better control
-        let system_message = Message {
-            role: "system".to_string(),
-            content: "You are a vision analysis assistant. Analyze images and provide labels with confidence scores.".to_string(),
-        };
-
-        let user_message = Message {
-            role: "user".to_string(),
-            content: format!(
-                "Analyze this image {} and provide up to {} labels with confidence above {}. \
-                Format each label as 'label:confidence'. \
-                Focus on clear, descriptive labels.",
-                image_url,
-                self.config.max_labels,
-                self.config.confidence_threshold
-            ),
-        };
-
-        let messages = vec![system_message, user_message];
+        let prompt = format!(
+            "You are a vision analysis assistant. Analyze images and provide labels with confidence scores.\n\n\
+            Analyze this image {} and provide up to {} labels with confidence above {}. \
+            Format each label as 'label:confidence'. \
+            Focus on clear, descriptive labels.",
+            image_url,
+            self.config.max_labels,
+            self.config.confidence_threshold
+        );
 
         let response = agent
-            .prompt(&messages[1].content)  // Using prompt instead of chat
+            .completion(&prompt)
             .await
             .map_err(|e| VisionError::ApiError(e.to_string()))?;
 
