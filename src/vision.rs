@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use log::{info, error};
 use tokio::time::Duration;
 use reqwest::Client;
-use rig::Error as RigError;
+use rig_core::Error as RigError;
 
 // Constants for Vision API
 const VISION_API_TIMEOUT: u64 = 10;
@@ -201,7 +201,7 @@ pub enum VisionError {
 // Implement conversion from VisionError to RigError
 impl From<VisionError> for RigError {
     fn from(err: VisionError) -> RigError {
-        RigError::Custom(err.to_string())
+        RigError::Generic(err.to_string())
     }
 }
 
