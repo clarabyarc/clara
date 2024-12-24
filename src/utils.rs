@@ -2,9 +2,8 @@ use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use log::{info, warn};
-use rig::prelude::*;
-use rig::config::Config;
-use rig::metrics::Metrics as RigMetrics;
+use rig::config::{Config, ConfigBuilder};
+use rig::metrics::Metrics;
 
 const CACHE_TIMEOUT_SECS: u64 = 86400;
 
@@ -16,14 +15,12 @@ struct CacheEntry {
 
 pub struct CacheManager {
     cache: HashMap<String, CacheEntry>,
-    config: Config,
 }
 
 impl CacheManager {
     pub fn new() -> Self {
         CacheManager {
             cache: HashMap::new(),
-            config: Config::default(),
         }
     }
 
@@ -128,12 +125,6 @@ pub enum UtilError {
     ConfigError(String),
 }
 
-impl From<UtilError> for rig::Error {
-    fn from(err: UtilError) -> Self {
-        rig::Error::Provider(err.to_string())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub twitter: TwitterConfig,
@@ -168,10 +159,12 @@ pub struct StoryConfig {
 
 impl AppConfig {
     pub async fn load() -> Result<Self, UtilError> {
-        let config = Config::from_env()
+        let config = ConfigBuilder::new()
+            .env()
+            .build()
             .map_err(|e| UtilError::ConfigError(e.to_string()))?;
             
-        Ok(AppConfig::from(config))
+        Ok(Self::default())
     }
 }
 
@@ -199,7 +192,7 @@ impl Default for AppConfig {
 }
 
 pub struct AppMetrics {
-    metrics: RigMetrics,
+    metrics: Metrics,
     requests: usize,
     successes: usize,
     failures: usize,
@@ -207,7 +200,7 @@ pub struct AppMetrics {
 }
 
 impl AppMetrics {
-    pub fn new(metrics: RigMetrics) -> Self {
+    pub fn new(metrics: Metrics) -> Self {
         AppMetrics {
             metrics,
             requests: 0,
@@ -228,8 +221,12 @@ impl AppMetrics {
         let rt_secs = response_time.as_secs_f64();
         self.average_response_time = (self.average_response_time * (self.requests - 1) as f64 + rt_secs) / self.requests as f64;
         
-        // Record metrics using rig's metrics
-        self.metrics.record_request(success, response_time);
+        self.metrics.record_latency(response_time);
+        if success {
+            self.metrics.record_success();
+        } else {
+            self.metrics.record_failure();
+        }
     }
 
     pub fn get_stats(&self) -> String {
