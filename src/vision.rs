@@ -55,18 +55,25 @@ impl VisionAnalyzer {
             content: prompt.clone(),
         }];
 
-        let completion_result = agent
-            .completion(&prompt, messages)
+        let response = agent
+            .completion(&messages[0].content, messages)
             .await
             .map_err(|e| VisionError::ApiError(e.to_string()))?;
 
-        let response_content = completion_result.content
-            .map_err(|e| VisionError::ApiError(e.to_string()))?;
-
-        let keywords = self.process_response(&response_content)?;
+        let keywords = self.process_response(&response)?;
 
         info!("Image analysis completed. Keywords: {:?}", keywords);
         Ok(keywords)
+    }
+
+    fn build_prompt(&self, keywords: &[String]) -> String {
+        let keywords_str = keywords.join(", ");
+        format!(
+            "A cute cartoon cat with characteristics of {}, drawn in {}, \
+            warm colors, friendly expression, simple background, safe for children",
+            keywords_str,
+            self.config.style
+        )
     }
 
     fn process_response(&self, response: &str) -> Result<Vec<String>, VisionError> {
@@ -140,6 +147,15 @@ impl Default for VisionConfig {
             confidence_threshold: MIN_CONFIDENCE,
         }
     }
+}
+
+pub fn generate_cache_key(keywords: &[String]) -> String {
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+    
+    let mut hasher = DefaultHasher::new();
+    keywords.join("-").hash(&mut hasher);
+    format!("img_{:x}", hasher.finish())
 }
 
 #[cfg(test)]
