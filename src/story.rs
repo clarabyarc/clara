@@ -34,12 +34,9 @@ impl StoryGenerator {
         let response = agent
             .completion(&messages[1].content, messages)
             .await
-            .map_err(|e| StoryError::ApiError(e.to_string()))?
-            .message
-            .content
-            .clone();
+            .map_err(|e| StoryError::ApiError(e.to_string()))?;
 
-        let formatted_story = self.format_story(&response)?;
+        let formatted_story = self.format_story(&response.text)?;
         
         info!("Story generation completed successfully");
         Ok(formatted_story)
