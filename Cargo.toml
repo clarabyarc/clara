@@ -8,7 +8,7 @@ license = "MIT"
 
 [dependencies]
 # Rig Framework
-rig = { git = "https://github.com/0xPlaygrounds/rig" }
+rig-core = { git = "https://github.com/0xPlaygrounds/rig" }
 
 # Async Runtime
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
