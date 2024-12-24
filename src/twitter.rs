@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use log::{info, warn, error};
 use std::collections::HashMap;
 use tokio::sync::Mutex;
-use rig::{Error as RigError, Client as RigClient};
+use rig_core::{Error as RigError, Client as RigClient, SocialMention};
 
 // Constants for rate limiting
 const MAX_REQUESTS_PER_DAY: u32 = 3;
@@ -49,7 +49,7 @@ impl TwitterHandler {
         
         let mentions = self.rig_client.get_social_mentions()
             .await
-            .map_err(TwitterError::ClientError)?;
+            .map_err(|e| TwitterError::ClientError(RigError::Generic(e.to_string())))?;
             
         let typed_mentions = mentions.into_iter()
             .filter_map(|mention| self.convert_to_twitter_mention(mention))
@@ -61,7 +61,7 @@ impl TwitterHandler {
     }
 
     // Convert Rig mention to TwitterMention
-    fn convert_to_twitter_mention(&self, rig_mention: rig::SocialMention) -> Option<TwitterMention> {
+    fn convert_to_twitter_mention(&self, rig_mention: SocialMention) -> Option<TwitterMention> {
         Some(TwitterMention {
             tweet_id: rig_mention.id?,
             user_id: rig_mention.user_id?,
@@ -128,7 +128,7 @@ impl TwitterHandler {
         
         let media_id = self.rig_client.upload_media(&image)
             .await
-            .map_err(TwitterError::ClientError)?;
+            .map_err(|e| TwitterError::ClientError(RigError::Generic(e.to_string())))?;
         
         let reply_text = format!(
             "@{} Here's your cat illustration with a story:\n\n{}",
@@ -142,7 +142,7 @@ impl TwitterHandler {
             Some(&media_id)
         )
         .await
-        .map_err(TwitterError::ClientError)?;
+        .map_err(|e| TwitterError::ClientError(RigError::Generic(e.to_string())))?;
 
         info!("Reply sent successfully to: {}", mention.username);
         Ok(())
@@ -165,7 +165,7 @@ pub enum TwitterError {
 // Implement conversion from TwitterError to RigError
 impl From<TwitterError> for RigError {
     fn from(err: TwitterError) -> RigError {
-        RigError::Custom(err.to_string())
+        RigError::Generic(err.to_string())
     }
 }
 
@@ -176,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rate_limit() {
-        let client = RigClient::new().unwrap();
+        let client = RigClient::default().unwrap();
         let handler = TwitterHandler::new(client);
         let user_id = "test_user";
 
