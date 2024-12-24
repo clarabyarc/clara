@@ -59,8 +59,6 @@ impl VisionAnalyzer {
             .completion(&messages[0].content, messages)
             .await
             .map_err(|e| VisionError::ApiError(e.to_string()))?
-            .first()
-            .ok_or(VisionError::AnalysisFailed("No response received".to_string()))?
             .message
             .content
             .clone();
