@@ -1,18 +1,18 @@
 use log::{info, error};
-use rig::prelude::*;
-use rig::providers::openai::{Client as OpenAIClient, ChatRequest, ChatMessage, Role};
+use rig::completion::{Prompt, Message, Chat};
+use rig::providers::openai::{self, Client};
 use serde::{Deserialize, Serialize};
 
 const MAX_STORY_LENGTH: usize = 280; // Twitter character limit
 const TEMPERATURE: f32 = 0.7;
 
 pub struct StoryGenerator {
-    openai_client: OpenAIClient,
+    openai_client: Client,
     config: StoryConfig,
 }
 
 impl StoryGenerator {
-    pub fn new(openai_client: &OpenAIClient) -> Result<Self, StoryError> {
+    pub fn new(openai_client: &Client) -> Result<Self, StoryError> {
         Ok(StoryGenerator {
             openai_client: openai_client.clone(),
             config: StoryConfig::default(),
@@ -23,22 +23,22 @@ impl StoryGenerator {
         info!("Generating story with keywords: {:?}", keywords);
 
         let prompt = self.build_prompt(keywords);
-        let request = self.build_request(&prompt);
+        let messages = self.build_messages(&prompt);
         
-        let response = self.openai_client
-            .chat(request)
+        let agent = self.openai_client
+            .agent("gpt-4")
+            .temperature(self.config.temperature)
+            .max_tokens((self.config.max_length as f32 * 1.5) as u32)
+            .presence_penalty(0.6)
+            .frequency_penalty(0.5)
+            .build();
+
+        let response = agent
+            .chat(&messages)
             .await
             .map_err(|e| StoryError::ApiError(e.to_string()))?;
 
-        let story = response
-            .choices
-            .first()
-            .ok_or(StoryError::NoStoryGenerated)?
-            .message
-            .content
-            .clone();
-
-        let formatted_story = self.format_story(&story)?;
+        let formatted_story = self.format_story(&response)?;
         
         info!("Story generation completed successfully");
         Ok(formatted_story)
@@ -56,25 +56,13 @@ impl StoryGenerator {
         )
     }
 
-    fn build_request(&self, prompt: &str) -> ChatRequest {
-        ChatRequest::new()
-            .model("gpt-4")
-            .temperature(self.config.temperature)
-            .max_tokens((self.config.max_length as f32 * 1.5) as i32)
-            .presence_penalty(0.6)
-            .frequency_penalty(0.5)
-            .messages(vec![
-                ChatMessage {
-                    role: Role::System,
-                    content: "You are a creative children's story writer. Keep stories short, positive, and engaging.".into(),
-                    name: None,
-                },
-                ChatMessage {
-                    role: Role::User,
-                    content: prompt.into(),
-                    name: None,
-                },
-            ])
+    fn build_messages(&self, prompt: &str) -> Vec<Message> {
+        vec![
+            Message::system(
+                "You are a creative children's story writer. Keep stories short, positive, and engaging."
+            ),
+            Message::user(prompt)
+        ]
     }
 
     fn format_story(&self, story: &str) -> Result<String, StoryError> {
@@ -111,12 +99,6 @@ pub enum StoryError {
     ApiError(String),
 }
 
-impl From<StoryError> for rig::Error {
-    fn from(err: StoryError) -> Self {
-        rig::Error::Provider(err.to_string())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoryConfig {
     pub max_length: usize,
@@ -148,7 +130,7 @@ mod tests {
     use super::*;
 
     fn setup_test_generator() -> StoryGenerator {
-        let openai_client = OpenAIClient::from_env().unwrap();
+        let openai_client = Client::from_env().unwrap();
         StoryGenerator::new(&openai_client).unwrap()
     }
 
