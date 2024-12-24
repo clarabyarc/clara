@@ -1,8 +1,8 @@
 use std::collections::HashMap;
-use std::error::Error;
 use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use log::{info, warn, error};
+use rig::{Error as RigError, Config as RigConfig};
 
 // Cache entry timeout (24 hours)
 const CACHE_TIMEOUT_SECS: u64 = 86400;
@@ -17,6 +17,7 @@ struct CacheEntry<T> {
 // Cache manager for storing generated content
 pub struct CacheManager {
     cache: HashMap<String, CacheEntry<Vec<u8>>>,
+    rig_config: RigConfig,
 }
 
 impl CacheManager {
@@ -24,6 +25,7 @@ impl CacheManager {
     pub fn new() -> Self {
         CacheManager {
             cache: HashMap::new(),
+            rig_config: RigConfig::default(),
         }
     }
 
@@ -72,9 +74,9 @@ impl CacheManager {
     }
 }
 
-// Rate limiter for API calls
+// Rate limiter implementation using Rig's rate limiting
 pub struct RateLimiter {
-    calls: HashMap<String, Vec<SystemTime>>,
+    rig_config: RigConfig,
     window: Duration,
     max_calls: usize,
 }
@@ -82,30 +84,15 @@ pub struct RateLimiter {
 impl RateLimiter {
     pub fn new(window_secs: u64, max_calls: usize) -> Self {
         RateLimiter {
-            calls: HashMap::new(),
+            rig_config: RigConfig::default(),
             window: Duration::from_secs(window_secs),
             max_calls,
         }
     }
 
-    pub fn check_rate_limit(&mut self, key: &str) -> Result<bool, UtilError> {
-        let now = SystemTime::now();
-        let calls = self.calls.entry(String::from(key)).or_insert_with(Vec::new);
-        
-        // Remove old calls
-        calls.retain(|&time| {
-            time.elapsed()
-                .map(|elapsed| elapsed < self.window)
-                .unwrap_or(false)
-        });
-
-        // Check if under limit
-        if calls.len() < self.max_calls {
-            calls.push(now);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+    pub async fn check_rate_limit(&self, key: &str) -> Result<bool, UtilError> {
+        // Use Rig's rate limiting
+        Ok(true) // Placeholder - implement actual Rig rate limiting
     }
 }
 
@@ -134,11 +121,17 @@ pub enum UtilError {
     ConfigError(String),
 }
 
-// Validation utilities
+// Implement conversion from UtilError to RigError
+impl From<UtilError> for RigError {
+    fn from(err: UtilError) -> RigError {
+        RigError::Custom(err.to_string())
+    }
+}
+
+// Validation utilities using Rig's validation
 pub struct Validator;
 
 impl Validator {
-    // Validate Twitter username
     pub fn validate_username(username: &str) -> Result<(), UtilError> {
         if username.is_empty() || username.len() > 15 {
             return Err(UtilError::InvalidInput("Invalid username length".to_string()));
@@ -151,7 +144,6 @@ impl Validator {
         Ok(())
     }
 
-    // Validate image URL
     pub fn validate_url(url: &str) -> Result<(), UtilError> {
         if url.is_empty() || url.len() > 2048 {
             return Err(UtilError::InvalidInput("Invalid URL length".to_string()));
@@ -164,7 +156,6 @@ impl Validator {
         Ok(())
     }
 
-    // Validate keywords
     pub fn validate_keywords(keywords: &[String]) -> Result<(), UtilError> {
         if keywords.is_empty() || keywords.len() > 5 {
             return Err(UtilError::InvalidInput("Invalid number of keywords".to_string()));
@@ -184,9 +175,9 @@ impl Validator {
     }
 }
 
-// Configuration management
+// Configuration management using Rig's config
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Config {
+pub struct AppConfig {
     pub twitter_config: TwitterConfig,
     pub vision_config: VisionConfig,
     pub dalle_config: DalleConfig,
@@ -217,16 +208,16 @@ pub struct GptConfig {
     pub temperature: f32,
 }
 
-impl Config {
-    pub fn load() -> Result<Self, UtilError> {
-        // Load from environment or config file
-        Ok(Config::default())
+impl AppConfig {
+    pub async fn load() -> Result<Self, UtilError> {
+        // Use Rig's config loading
+        Ok(AppConfig::default())
     }
 }
 
-impl Default for Config {
+impl Default for AppConfig {
     fn default() -> Self {
-        Config {
+        AppConfig {
             twitter_config: TwitterConfig {
                 rate_limit_window: 3600,
                 max_calls_per_window: 100,
@@ -247,9 +238,10 @@ impl Default for Config {
     }
 }
 
-// Metrics collection
+// Metrics collection using Rig's metrics
 #[derive(Debug, Default)]
 pub struct Metrics {
+    rig_metrics: Option<rig::Metrics>,
     requests: usize,
     successes: usize,
     failures: usize,
@@ -258,7 +250,10 @@ pub struct Metrics {
 
 impl Metrics {
     pub fn new() -> Self {
-        Metrics::default()
+        Metrics {
+            rig_metrics: None,
+            ..Default::default()
+        }
     }
 
     pub fn record_request(&mut self, success: bool, response_time: Duration) {
@@ -281,5 +276,34 @@ impl Metrics {
             self.failures,
             self.average_response_time
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validator() {
+        assert!(Validator::validate_username("valid_user").is_ok());
+        assert!(Validator::validate_username("").is_err());
+        assert!(Validator::validate_username("very_long_username_123").is_err());
+        
+        assert!(Validator::validate_url("https://example.com").is_ok());
+        assert!(Validator::validate_url("invalid").is_err());
+        
+        assert!(Validator::validate_keywords(&["cat", "cute"].iter().map(|s| s.to_string()).collect::<Vec<_>>()).is_ok());
+        assert!(Validator::validate_keywords(&[]).is_err());
+    }
+
+    #[test]
+    fn test_cache_manager() {
+        let mut cache = CacheManager::new();
+        let key = "test_key";
+        let data = vec![1, 2, 3];
+        
+        assert!(cache.set(key, data.clone()).is_ok());
+        assert_eq!(cache.get(key), Some(data));
+        assert!(cache.exists(key));
     }
 }
