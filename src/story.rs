@@ -35,8 +35,6 @@ impl StoryGenerator {
             .completion(&messages[1].content, messages)
             .await
             .map_err(|e| StoryError::ApiError(e.to_string()))?
-            .first()
-            .ok_or(StoryError::NoStoryGenerated)?
             .message
             .content
             .clone();
