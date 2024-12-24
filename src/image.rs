@@ -1,6 +1,6 @@
 use log::{info, error};
 use rig::completion::Prompt;
-use rig::providers::openai::{self, Client};
+use rig::providers::openai::Client;  
 use serde::{Serialize, Deserialize};
 use base64::prelude::*;
 use anyhow::Result;
@@ -42,15 +42,15 @@ impl ImageGenerator {
         info!("Generating cat image with keywords: {:?}", keywords);
 
         let prompt = self.build_prompt(keywords);
-        let request = self.build_request(&prompt);
         
         let agent = self.openai_client.agent("dall-e-3").build();
+        
         let response = agent
-            .prompt(&prompt)
+            .image_generation(&prompt)  
             .await
             .map_err(|e| ImageError::ApiError(e.to_string()))?;
 
-        let image_data = self.process_response(response)?;
+        let image_data = self.process_response(&response)?;  
         
         info!("Image generation completed successfully");
         Ok(image_data)
@@ -75,8 +75,8 @@ impl ImageGenerator {
         )
     }
 
-    fn process_response(&self, response: String) -> Result<Vec<u8>, ImageError> {
-        let image_data = serde_json::from_str::<ImageGenerationResponse>(&response)
+    fn process_response(&self, response: &str) -> Result<Vec<u8>, ImageError> {  
+        let image_data = serde_json::from_str::<ImageGenerationResponse>(response)
             .map_err(|e| ImageError::ProcessingError(e.to_string()))?
             .data
             .first()
