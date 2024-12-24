@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use log::{info, error};
 use rig::providers::openai::Client;
+use rig::completion::{Chat, Message}; // Added Chat trait
 use async_trait::async_trait;
 use anyhow::Result;
 
@@ -19,7 +20,7 @@ trait VisionService {
     async fn validate_image_url(&self, url: &str) -> Result<bool, VisionError>;
 }
 
-pub struct VisionAnalyzer {  
+pub struct VisionAnalyzer {
     client: Client,
     config: VisionConfig,
 }
@@ -35,23 +36,32 @@ impl VisionAnalyzer {
     pub async fn analyze_image(&self, image_url: &str) -> Result<Vec<String>, VisionError> {
         info!("Analyzing image: {}", image_url);
 
-        let agent = self.client.agent("gpt-4-vision-preview").build();
+        let agent = self.client
+            .agent("gpt-4-vision-preview")
+            .build();
         
-        let messages = vec![
-            rig::completion::Message {
-                role: "user".to_string(),
-                content: format!(
-                    "Analyze this image {} and provide up to {} labels with confidence above {}. \
-                    Format each label as 'label:confidence'.",
-                    image_url,
-                    self.config.max_labels,
-                    self.config.confidence_threshold
-                ),
-            }
-        ];
+        // Using structured message for better control
+        let system_message = Message {
+            role: "system".to_string(),
+            content: "You are a vision analysis assistant. Analyze images and provide labels with confidence scores.".to_string(),
+        };
+
+        let user_message = Message {
+            role: "user".to_string(),
+            content: format!(
+                "Analyze this image {} and provide up to {} labels with confidence above {}. \
+                Format each label as 'label:confidence'. \
+                Focus on clear, descriptive labels.",
+                image_url,
+                self.config.max_labels,
+                self.config.confidence_threshold
+            ),
+        };
+
+        let messages = vec![system_message, user_message];
 
         let response = agent
-            .chat(&messages)
+            .prompt(&messages[1].content)  // Using prompt instead of chat
             .await
             .map_err(|e| VisionError::ApiError(e.to_string()))?;
 
@@ -74,8 +84,9 @@ impl VisionAnalyzer {
             }
         }
 
+        // Fallback for empty results
         if keywords.is_empty() {
-            keywords.push("person".to_string());
+            keywords.push("unclassified".to_string());
         }
 
         Ok(keywords.into_iter().take(self.config.max_labels).collect())
