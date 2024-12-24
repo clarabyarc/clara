@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use log::{info, error};
 use reqwest::Client;
 use tokio::time::Duration;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::prelude::*;
 
 // Constants for DALL-E API
 const DALLE_API_TIMEOUT: u64 = 30;
@@ -51,7 +51,7 @@ impl ImageGenerator {
         Ok(ImageGenerator {
             client,
             api_key,
-            api_endpoint: "https://api.openai.com/v1/images/generations".to_string(),
+            api_endpoint: String::from("https://api.openai.com/v1/images/generations"),
         })
     }
 
@@ -82,10 +82,10 @@ impl ImageGenerator {
     // Build DALL-E API request
     fn build_request(&self, prompt: &str) -> DallERequest {
         DallERequest {
-            prompt: prompt.to_string(),
+            prompt: String::from(prompt),
             n: 1,
-            size: IMAGE_SIZE.to_string(),
-            response_format: "b64_json".to_string(),
+            size: String::from(IMAGE_SIZE),
+            response_format: String::from("b64_json"),
         }
     }
 
@@ -115,7 +115,7 @@ impl ImageGenerator {
             .ok_or(ImageError::NoImageGenerated)?;
 
         // Decode base64 image data
-        let image_bytes = BASE64.decode(&image_data.b64_json)?;
+        let image_bytes = BASE64_STANDARD.decode(&image_data.b64_json)?;
 
         Ok(image_bytes)
     }
@@ -169,8 +169,8 @@ pub struct ImageConfig {
 impl Default for ImageConfig {
     fn default() -> Self {
         ImageConfig {
-            size: IMAGE_SIZE.to_string(),
-            style: DEFAULT_STYLE.to_string(),
+            size: String::from(IMAGE_SIZE),
+            style: String::from(DEFAULT_STYLE),
         }
     }
 }
