@@ -7,14 +7,18 @@ edition = "2021"
 # Core RIG dependency
 rig-core = { git = "https://github.com/0xPlaygrounds/rig" }
 
-# APIs
-openai = "0.11"
-twitter-api = "0.10"
-google-vision = "0.8"
+# AI and Cloud Services
+openai = { version = "0.11" }
+google-cloud-vision = "0.3"
+google-cloud-storage = "0.3"
+
+# Twitter API
+twitter-v2 = "0.1.8"
+oauth2 = "4.4"
 
 # Async runtime and networking
 tokio = { version = "1.0", features = ["full"] }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "multipart"] }
 futures = "0.3"
 
 # Serialization
@@ -30,6 +34,8 @@ thiserror = "1.0"
 dotenv = "0.15"
 chrono = { version = "0.4", features = ["serde"] }
 base64 = "0.13"
+rand = "0.8"
 
 [dev-dependencies]
 tokio-test = "0.4"
+mock-it = "0.4"
