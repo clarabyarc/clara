@@ -3,21 +3,20 @@ use std::error::Error;
 use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 use log::{info, warn, error};
-use tokio::sync::Mutex;
 
 // Cache entry timeout (24 hours)
 const CACHE_TIMEOUT_SECS: u64 = 86400;
 
 // Cache entry structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CacheEntry {
-    data: Vec<u8>,
+struct CacheEntry<T> {
+    data: T,
     timestamp: SystemTime,
 }
 
 // Cache manager for storing generated content
 pub struct CacheManager {
-    cache: HashMap<String, CacheEntry>,
+    cache: HashMap<String, CacheEntry<Vec<u8>>>,
 }
 
 impl CacheManager {
@@ -29,14 +28,15 @@ impl CacheManager {
     }
 
     // Store data in cache
-    pub fn set(&mut self, key: String, data: Vec<u8>) {
+    pub fn set(&mut self, key: &str, data: Vec<u8>) -> Result<(), UtilError> {
         let entry = CacheEntry {
             data,
             timestamp: SystemTime::now(),
         };
         
-        self.cache.insert(key, entry);
+        self.cache.insert(key.to_string(), entry);
         self.cleanup();
+        Ok(())
     }
 
     // Retrieve data from cache
@@ -53,12 +53,17 @@ impl CacheManager {
         })
     }
 
+    // Check if key exists in cache
+    pub fn exists(&self, key: &str) -> bool {
+        self.cache.contains_key(key)
+    }
+
     // Check if cache entry is still valid
-    fn is_entry_valid(&self, entry: &CacheEntry) -> bool {
-        match entry.timestamp.elapsed() {
-            Ok(elapsed) => elapsed < Duration::from_secs(CACHE_TIMEOUT_SECS),
-            Err(_) => false,
-        }
+    fn is_entry_valid(&self, entry: &CacheEntry<Vec<u8>>) -> bool {
+        entry.timestamp
+            .elapsed()
+            .map(|elapsed| elapsed < Duration::from_secs(CACHE_TIMEOUT_SECS))
+            .unwrap_or(false)
     }
 
     // Clean up expired entries
@@ -83,24 +88,23 @@ impl RateLimiter {
         }
     }
 
-    pub fn check_rate_limit(&mut self, key: &str) -> bool {
+    pub fn check_rate_limit(&mut self, key: &str) -> Result<bool, UtilError> {
         let now = SystemTime::now();
-        let calls = self.calls.entry(key.to_string()).or_insert_with(Vec::new);
+        let calls = self.calls.entry(String::from(key)).or_insert_with(Vec::new);
         
         // Remove old calls
         calls.retain(|&time| {
-            match time.elapsed() {
-                Ok(elapsed) => elapsed < self.window,
-                Err(_) => false,
-            }
+            time.elapsed()
+                .map(|elapsed| elapsed < self.window)
+                .unwrap_or(false)
         });
 
         // Check if under limit
         if calls.len() < self.max_calls {
             calls.push(now);
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 }
@@ -108,7 +112,9 @@ impl RateLimiter {
 // Text sanitization functions
 pub fn sanitize_text(text: &str) -> String {
     text.chars()
-        .filter(|&c| c.is_alphanumeric() || c.is_whitespace() || c == '-' || c == '.' || c == ',' || c == '!')
+        .filter(|&c| {
+            c.is_alphanumeric() || c.is_whitespace() || matches!(c, '-' | '.' | ',' | '!')
+        })
         .collect()
 }
 
@@ -123,6 +129,9 @@ pub enum UtilError {
     
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+    
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 }
 
 // Validation utilities
@@ -130,36 +139,48 @@ pub struct Validator;
 
 impl Validator {
     // Validate Twitter username
-    pub fn validate_username(username: &str) -> bool {
+    pub fn validate_username(username: &str) -> Result<(), UtilError> {
         if username.is_empty() || username.len() > 15 {
-            return false;
+            return Err(UtilError::InvalidInput("Invalid username length".to_string()));
         }
         
-        username.chars().all(|c| {
-            c.is_alphanumeric() || c == '_'
-        })
+        if !username.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return Err(UtilError::InvalidInput("Invalid username characters".to_string()));
+        }
+
+        Ok(())
     }
 
     // Validate image URL
-    pub fn validate_url(url: &str) -> bool {
+    pub fn validate_url(url: &str) -> Result<(), UtilError> {
         if url.is_empty() || url.len() > 2048 {
-            return false;
+            return Err(UtilError::InvalidInput("Invalid URL length".to_string()));
         }
 
-        url.starts_with("http") && url.contains('.')
+        if !url.starts_with("http") || !url.contains('.') {
+            return Err(UtilError::InvalidInput("Invalid URL format".to_string()));
+        }
+
+        Ok(())
     }
 
     // Validate keywords
-    pub fn validate_keywords(keywords: &[String]) -> bool {
+    pub fn validate_keywords(keywords: &[String]) -> Result<(), UtilError> {
         if keywords.is_empty() || keywords.len() > 5 {
-            return false;
+            return Err(UtilError::InvalidInput("Invalid number of keywords".to_string()));
         }
 
-        keywords.iter().all(|k| {
-            !k.is_empty() && k.len() <= 30 && k.chars().all(|c| {
-                c.is_alphanumeric() || c.is_whitespace() || c == '-'
-            })
-        })
+        for keyword in keywords {
+            if keyword.is_empty() || keyword.len() > 30 {
+                return Err(UtilError::InvalidInput("Invalid keyword length".to_string()));
+            }
+            
+            if !keyword.chars().all(|c| c.is_alphanumeric() || c.is_whitespace() || c == '-') {
+                return Err(UtilError::InvalidInput("Invalid keyword characters".to_string()));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -197,9 +218,8 @@ pub struct GptConfig {
 }
 
 impl Config {
-    pub fn load() -> Result<Self, Box<dyn Error>> {
+    pub fn load() -> Result<Self, UtilError> {
         // Load from environment or config file
-        // For now, return default config
         Ok(Config::default())
     }
 }
@@ -216,8 +236,8 @@ impl Default for Config {
                 max_labels: 4,
             },
             dalle_config: DalleConfig {
-                image_size: "512x512".to_string(),
-                style: "children's book illustration".to_string(),
+                image_size: String::from("512x512"),
+                style: String::from("children's book illustration"),
             },
             gpt_config: GptConfig {
                 max_tokens: 280,
