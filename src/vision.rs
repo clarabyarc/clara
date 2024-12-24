@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use log::{info, error};
 use rig::providers::openai::Client;
 use async_trait::async_trait;
+use anyhow::Result;
 
 const MAX_LABELS: usize = 4;
 const MIN_CONFIDENCE: f32 = 0.75;
@@ -18,14 +19,14 @@ trait VisionService {
     async fn validate_image_url(&self, url: &str) -> Result<bool, VisionError>;
 }
 
-pub struct VisionHandler {
+pub struct VisionAnalyzer {  
     client: Client,
     config: VisionConfig,
 }
 
-impl VisionHandler {
+impl VisionAnalyzer {
     pub fn new(openai_client: &Client) -> Result<Self, VisionError> {
-        Ok(VisionHandler {
+        Ok(VisionAnalyzer {
             client: openai_client.clone(),
             config: VisionConfig::default(),
         })
@@ -36,15 +37,21 @@ impl VisionHandler {
 
         let agent = self.client.agent("gpt-4-vision-preview").build();
         
-        let prompt = format!(
-            "Analyze this image and provide up to {} labels with confidence above {}. \
-            Format: label:confidence",
-            self.config.max_labels,
-            self.config.confidence_threshold
-        );
+        let messages = vec![
+            rig::completion::Message {
+                role: "user".to_string(),
+                content: format!(
+                    "Analyze this image {} and provide up to {} labels with confidence above {}. \
+                    Format each label as 'label:confidence'.",
+                    image_url,
+                    self.config.max_labels,
+                    self.config.confidence_threshold
+                ),
+            }
+        ];
 
         let response = agent
-            .prompt(&format!("Image URL: {}\n{}", image_url, prompt))
+            .chat(&messages)
             .await
             .map_err(|e| VisionError::ApiError(e.to_string()))?;
 
@@ -79,7 +86,10 @@ impl VisionHandler {
             return Ok(false);
         }
 
-        let response = reqwest::get(url)
+        let client = reqwest::Client::new();
+        let response = client
+            .head(url)
+            .send()
             .await
             .map_err(|_| VisionError::InvalidImageUrl)?;
 
@@ -126,29 +136,32 @@ impl Default for VisionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio;
 
-    async fn setup_test_handler() -> VisionHandler {
+    async fn setup_test_analyzer() -> VisionAnalyzer {
         let openai_client = Client::from_env().unwrap();
-        VisionHandler::new(&openai_client).unwrap()
+        VisionAnalyzer::new(&openai_client).unwrap()
     }
 
     #[tokio::test]
     async fn test_validate_image_url() {
-        let handler = setup_test_handler().await;
+        let analyzer = setup_test_analyzer().await;
         
         // Test valid image URL
-        assert!(handler.validate_image_url("https://example.com/image.jpg").await.unwrap());
+        let valid_url = "https://example.com/image.jpg";
+        assert!(analyzer.validate_image_url(valid_url).await.unwrap());
         
         // Test invalid image URL
-        assert!(!handler.validate_image_url("https://example.com/not-image").await.unwrap());
+        let invalid_url = "not-a-url";
+        assert!(!analyzer.validate_image_url(invalid_url).await.unwrap());
     }
 
     #[tokio::test]
     async fn test_analyze_image() {
-        let handler = setup_test_handler().await;
+        let analyzer = setup_test_analyzer().await;
         let image_url = "https://example.com/test.jpg";
         
-        let keywords = handler.analyze_image(image_url).await.unwrap();
+        let keywords = analyzer.analyze_image(image_url).await.unwrap();
         assert!(!keywords.is_empty());
         assert!(keywords.len() <= MAX_LABELS);
     }
