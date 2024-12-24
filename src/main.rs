@@ -38,7 +38,7 @@ impl Clara {
         
         // Initialize OpenAI client
         let openai_client = Client::from_env()
-            .map_err(|e| AppError::RigError(e.to_string()))?;
+            .expect("Failed to create OpenAI client");
         
         // Create handlers with OpenAI client
         let twitter_handler = Arc::new(TwitterHandler::new(&openai_client));
