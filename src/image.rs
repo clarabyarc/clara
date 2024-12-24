@@ -2,7 +2,8 @@ use log::{info, error};
 use reqwest::Client;
 use tokio::time::Duration;
 use base64::prelude::*;
-use rig::Error as RigError;
+use rig_core::Error as RigError;
+use serde::{Serialize, Deserialize};
 
 // Constants for DALL-E API
 const DALLE_API_TIMEOUT: u64 = 30;
@@ -165,12 +166,12 @@ pub enum ImageError {
 // Implement conversion from ImageError to RigError
 impl From<ImageError> for RigError {
     fn from(err: ImageError) -> RigError {
-        RigError::Custom(err.to_string())
+        RigError::Generic(err.to_string())
     }
 }
 
 // Image generation configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageConfig {
     pub size: String,
     pub style: String,
