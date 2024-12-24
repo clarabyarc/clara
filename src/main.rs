@@ -2,7 +2,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use log::{info, error};
 use dotenv::dotenv;
-use rig_core::{Client as RigClient};
+use rig::prelude::*;
+use rig::providers::openai::Client as OpenAIClient;
 
 mod twitter;
 mod vision;
@@ -18,6 +19,7 @@ use crate::utils::CacheManager;
 
 // Main application structure
 pub struct Clara {
+    openai_client: OpenAIClient,
     twitter_handler: Arc<TwitterHandler>,
     vision_handler: Arc<VisionHandler>,
     image_generator: Arc<ImageGenerator>,
@@ -29,26 +31,24 @@ pub struct Clara {
 impl Clara {
     // Initialize Clara instance
     pub async fn new() -> Result<Self, AppError> {
-        // Load environment variables
         dotenv().ok();
-        
-        // Initialize logger
-        env_logger::Builder::from_default_env()
-            .init();
+        env_logger::init();
         
         info!("Initializing Clara bot...");
         
-        let rig_client = RigClient::default()
-            .map_err(|e| AppError::RigError(rig_core::Error::Generic(e.to_string())))?;
+        // Initialize OpenAI client
+        let openai_client = OpenAIClient::from_env()
+            .map_err(|e| AppError::RigError(e))?;
         
-        // Create handlers with default configuration
-        let twitter_handler = Arc::new(TwitterHandler::new(rig_client));
-        let vision_handler = Arc::new(VisionHandler::new()?);
-        let image_generator = Arc::new(ImageGenerator::new()?);
-        let story_generator = Arc::new(StoryGenerator::new()?);
+        // Create handlers with OpenAI client
+        let twitter_handler = Arc::new(TwitterHandler::new(&openai_client));
+        let vision_handler = Arc::new(VisionHandler::new(&openai_client)?);
+        let image_generator = Arc::new(ImageGenerator::new(&openai_client)?);
+        let story_generator = Arc::new(StoryGenerator::new(&openai_client)?);
         let cache_manager = Arc::new(Mutex::new(CacheManager::new()));
         
         Ok(Clara {
+            openai_client,
             twitter_handler,
             vision_handler,
             image_generator,
@@ -109,30 +109,32 @@ impl Clara {
     ) -> Result<(), AppError> {
         info!("Processing mention from @{}", mention.username);
 
+        // Check cache
         let cache_key = format!("mention_{}", mention.tweet_id);
         if cache_manager.lock().await.exists(&cache_key) {
             info!("Found cached response for mention");
             return Ok(());
         }
 
+        // Process mention
         let keywords = vision_handler.analyze_image(&mention.avatar_url).await?;
         let image_data = image_generator.generate_cat_image(&keywords).await?;
         let story = story_generator.generate_story(&keywords).await?;
         
         twitter_handler.send_reply(&mention, image_data, story).await?;
         
-        cache_manager.lock().await.set(&cache_key, "completed".as_bytes().to_vec())?;
+        // Update cache
+        cache_manager.lock().await.set(&cache_key, "completed".to_string())?;
         
         info!("Successfully processed mention from @{}", mention.username);
         Ok(())
     }
 }
 
-// Custom error type for application
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("Rig error: {0}")]
-    RigError(#[from] rig_core::Error),
+    RigError(#[from] rig::Error),
 
     #[error("Twitter error: {0}")]
     TwitterError(#[from] twitter::TwitterError),
@@ -147,7 +149,7 @@ pub enum AppError {
     StoryError(#[from] story::StoryError),
 
     #[error("Cache error: {0}")]
-    CacheError(#[from] utils::UtilError),
+    CacheError(String),
 }
 
 #[tokio::main]
