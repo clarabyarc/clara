@@ -1,8 +1,8 @@
-use std::error::Error;
 use serde::{Deserialize, Serialize};
 use log::{info, error};
 use tokio::time::Duration;
 use reqwest::Client;
+use rig::Error as RigError;
 
 // Constants for Vision API
 const VISION_API_TIMEOUT: u64 = 10;
@@ -29,7 +29,6 @@ struct LabelAnnotation {
     score: f32,
 }
 
-// Renamed to avoid conflict with the main error enum
 #[derive(Debug, Deserialize)]
 struct ApiVisionError {
     code: i32,
@@ -71,13 +70,14 @@ pub struct VisionHandler {
 
 impl VisionHandler {
     // Initialize Vision handler
-    pub fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new() -> Result<Self, VisionError> {
         let api_key = std::env::var("VISION_API_KEY")
-            .map_err(|_| "Missing VISION_API_KEY environment variable")?;
+            .map_err(|_| VisionError::ConfigError("Missing VISION_API_KEY environment variable".to_string()))?;
             
         let client = Client::builder()
             .timeout(Duration::from_secs(VISION_API_TIMEOUT))
-            .build()?;
+            .build()
+            .map_err(|e| VisionError::InitializationError(e.to_string()))?;
 
         Ok(VisionHandler {
             client,
@@ -91,10 +91,8 @@ impl VisionHandler {
         info!("Analyzing image: {}", image_url);
 
         let request = self.build_request(image_url);
-        let response = self.send_request(request).await
-            .map_err(|e| VisionError::AnalysisFailed(e.to_string()))?;
-        let keywords = self.process_response(response)
-            .map_err(|e| VisionError::AnalysisFailed(e.to_string()))?;
+        let response = self.send_request(request).await?;
+        let keywords = self.process_response(response)?;
 
         info!("Image analysis completed. Keywords: {:?}", keywords);
         Ok(keywords)
@@ -116,32 +114,34 @@ impl VisionHandler {
     }
 
     // Send request to Vision API
-    async fn send_request(&self, request: VisionApiRequest) -> Result<VisionApiResponse, Box<dyn Error>> {
+    async fn send_request(&self, request: VisionApiRequest) -> Result<VisionApiResponse, VisionError> {
         let response = self.client
             .post(&self.api_endpoint)
             .query(&[("key", &self.api_key)])
             .json(&request)
             .send()
-            .await?;
+            .await
+            .map_err(|e| VisionError::ApiError(e.to_string()))?;
 
         if !response.status().is_success() {
-            let error_text = response.text().await?;
+            let error_text = response.text().await
+                .map_err(|e| VisionError::ApiError(e.to_string()))?;
             error!("Vision API error: {}", error_text);
-            return Err(VisionError::ApiError(error_text).into());
+            return Err(VisionError::ApiError(error_text));
         }
 
-        let vision_response = response.json::<VisionApiResponse>().await?;
-        Ok(vision_response)
+        response.json::<VisionApiResponse>().await
+            .map_err(|e| VisionError::ApiError(e.to_string()))
     }
 
     // Process Vision API response
-    fn process_response(&self, response: VisionApiResponse) -> Result<Vec<String>, Box<dyn Error>> {
+    fn process_response(&self, response: VisionApiResponse) -> Result<Vec<String>, VisionError> {
         let annotations = response.responses
             .first()
-            .ok_or("Empty response from Vision API")?;
+            .ok_or_else(|| VisionError::ApiError("Empty response from Vision API".to_string()))?;
 
         if let Some(error) = &annotations.error {
-            return Err(VisionError::ApiError(error.message.clone()).into());
+            return Err(VisionError::ApiError(error.message.clone()));
         }
 
         // Filter and transform labels
@@ -166,7 +166,7 @@ impl VisionHandler {
             .head(url)
             .send()
             .await
-            .map_err(|e| VisionError::InvalidImageUrl)?;
+            .map_err(|_| VisionError::InvalidImageUrl)?;
 
         // Check if the URL points to a valid image
         if let Some(content_type) = response.headers().get("content-type") {
@@ -184,10 +184,59 @@ impl VisionHandler {
 pub enum VisionError {
     #[error("Failed to analyze image: {0}")]
     AnalysisFailed(String),
+    
     #[error("Invalid image URL")]
     InvalidImageUrl,
+    
     #[error("API error: {0}")]
     ApiError(String),
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
+    
+    #[error("Initialization error: {0}")]
+    InitializationError(String),
+}
+
+// Implement conversion from VisionError to RigError
+impl From<VisionError> for RigError {
+    fn from(err: VisionError) -> RigError {
+        RigError::Custom(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockito::mock;
+
+    #[tokio::test]
+    async fn test_validate_image_url() {
+        let handler = VisionHandler::new().unwrap();
+        
+        // Test valid image URL
+        let valid_url = "https://example.com/image.jpg";
+        let _mock = mock("HEAD", "/image.jpg")
+            .with_header("content-type", "image/jpeg")
+            .create();
+        
+        assert!(handler.validate_image_url(valid_url).await.unwrap());
+        
+        // Test invalid image URL
+        let invalid_url = "https://example.com/not-image";
+        let _mock = mock("HEAD", "/not-image")
+            .with_header("content-type", "text/plain")
+            .create();
+        
+        assert!(!handler.validate_image_url(invalid_url).await.unwrap());
+    }
+
+    #[test]
+    fn test_build_request() {
+        let handler = VisionHandler::new().unwrap();
+        let request = handler.build_request("https://example.com/image.jpg");
+        
+        assert_eq!(request.requests.len(), 1);
+        assert_eq!(request.requests[0].features[0].max_results, MAX_LABELS as i32);
+    }
 }
