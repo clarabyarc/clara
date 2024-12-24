@@ -59,13 +59,14 @@ impl ImageGenerator {
         let response = agent
             .completion(&messages[0].content, messages)
             .await
-            .map_err(|e| ImageError::ApiError(e.to_string()))?
-            .content;
+            .map_err(|e| ImageError::ApiError(e.to_string()))?;
+
+        let image_text = response.text().map_err(|e| ImageError::ApiError(e.to_string()))?;
 
         let temp_response = ImageGenerationResponse {
             created: chrono::Utc::now().timestamp() as u64,
             data: vec![ImageData {
-                b64_json: response,
+                b64_json: image_text,
             }],
         };
 
