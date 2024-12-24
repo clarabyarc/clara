@@ -1,6 +1,6 @@
 use log::{info, error};
-use rig_core::prelude::*;
-use rig_core::providers::openai::{Client as OpenAIClient, ChatRequest, ChatMessage, Role};
+use rig::prelude::*;
+use rig::providers::openai::{Client as OpenAIClient, ChatRequest, ChatMessage, Role};
 use serde::{Deserialize, Serialize};
 
 const MAX_STORY_LENGTH: usize = 280; // Twitter character limit
@@ -111,9 +111,9 @@ pub enum StoryError {
     ApiError(String),
 }
 
-impl From<StoryError> for rig_core::Error {
+impl From<StoryError> for rig::Error {
     fn from(err: StoryError) -> Self {
-        rig_core::Error::Provider(err.to_string())
+        rig::Error::Provider(err.to_string())
     }
 }
 
